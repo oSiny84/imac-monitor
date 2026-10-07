@@ -1,0 +1,1 @@
+grep frame_heartbeat "/c/D_ClaudeDevelop/mac monitor/fake/Diagnostics/capture-probe.jsonl" | tail -n 2 | awk '{ if (match($0, /"uptimeSeconds":[0-9.]+/)) { u = substr($0, RSTART+16, RLENGTH-16) } if (match($0, /"totalFrames":[0-9]+/)) { f = substr($0, RSTART+14, RLENGTH-14) } if (NR==1) { u0=u; f0=f } else { printf "capture %.2f fps over %.1f s\n", (f-f0)/(u-u0), u-u0 } }'

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>MacMonitor</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">PERSONAL CAMERA</p>
+        <h1>MacMonitor</h1>
+      </div>
+      <div id="connection" class="connection" aria-live="polite">연결 확인 중</div>
+    </header>
+
+    <section id="login-panel" class="panel login-panel" hidden>
+      <h2>소유자 로그인</h2>
+      <p>실시간 영상과 녹화는 인증 후에만 표시됩니다.</p>
+      <form id="login-form">
+        <label for="password">비밀번호</label>
+        <input id="password" name="password" type="password" minlength="12" autocomplete="current-password" required>
+        <button type="submit">로그인</button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+    </section>
+
+    <div id="app" hidden>
+      <nav class="tabs" aria-label="화면 선택">
+        <button class="tab active" data-view="live" type="button">실시간</button>
+        <button class="tab" data-view="recordings" type="button">녹화</button>
+        <button id="logout" class="quiet" type="button">로그아웃</button>
+      </nav>
+
+      <section id="live-view" class="view">
+        <div class="video-frame">
+          <iframe id="live-player" title="실시간 카메라" allow="autoplay; fullscreen" referrerpolicy="no-referrer"></iframe>
+        </div>
+        <div class="status-row">
+          <span id="media-status" class="status-dot">영상 서버 확인 중</span>
+          <button id="reload-live" class="secondary" type="button">영상 다시 연결</button>
+        </div>
+      </section>
+
+      <section id="recordings-view" class="view" hidden>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">MOTION ARCHIVE</p>
+            <h2>움직임 녹화</h2>
+          </div>
+          <button id="refresh-recordings" class="secondary" type="button">새로고침</button>
+        </div>
+        <div id="recordings" class="recordings"></div>
+        <p id="recordings-empty" class="empty" hidden>저장된 움직임 녹화가 없습니다.</p>
+      </section>
+    </div>
+  </main>
+
+  <template id="recording-template">
+    <article class="recording-card">
+      <button class="recording-summary" type="button">
+        <span class="recording-date"></span>
+        <span class="recording-size"></span>
+      </button>
+      <video controls preload="metadata" playsinline></video>
+    </article>
+  </template>
+</body>
+</html>
