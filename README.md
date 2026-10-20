@@ -47,7 +47,7 @@ AVFoundation 720p/15fps
 
 ## Mac에서 준비하고 실행
 
-Mac으로 옮길 최신 소스 ZIP은 [releases](releases/)에 있습니다. 2026-10-20 재검토에서 발견한 다운로드·첫 화면·녹화·감시 복구 오류와 실제 실행한 검사는 [재점검 기록](docs/RECHECK_2026-10-20.md)에 정리했습니다. 실제 Mac에서의 Swift 빌드·카메라·전원 동작은 검증 전입니다.
+Mac으로 옮길 최신 소스 ZIP은 [releases](releases/)에 있습니다. 초기 오류 수정은 [재점검 기록](docs/RECHECK_2026-10-20.md), 기능 5·6의 감지 표본·뒤로가기 복원·특수문자 실행 경로 수정은 [후속 리뷰 수정 기록](docs/REVIEW_FIXES_2026-10-20.md)에 정리했습니다. 실제 Mac에서의 Swift 빌드·카메라·전원 동작은 검증 전입니다.
 
 전체 순서는 [docs/SETUP_MAC.md](docs/SETUP_MAC.md)에 있습니다. 요약하면 다음과 같습니다.
 

@@ -68,16 +68,30 @@ public struct AppConfiguration: Codable, Equatable {
     }
 
     public static func loadOrCreate() throws -> AppConfiguration {
+        let configuration = try loadOrCreateForEditing()
+        try configuration.validate()
+        return configuration
+    }
+
+    /// Settings must be able to repair an older motion mask rejected by newer
+    /// sampling rules. Runtime consumers must keep using loadOrCreate().
+    public static func loadOrCreateForEditing() throws -> AppConfiguration {
         try AppDirectories.prepare()
         if FileManager.default.fileExists(atPath: AppDirectories.configuration.path) {
             let data = try Data(contentsOf: AppDirectories.configuration)
-            let configuration = try JSONDecoder().decode(AppConfiguration.self, from: data)
-            try configuration.validate()
-            return configuration
+            return try decodeForEditing(data)
         }
 
         let configuration = AppConfiguration()
         try configuration.save()
+        return configuration
+    }
+
+    public static func decodeForEditing(_ data: Data) throws -> AppConfiguration {
+        let configuration = try JSONDecoder().decode(AppConfiguration.self, from: data)
+        var checked = configuration
+        checked.motionRegions = MotionRegions()
+        try checked.validate()
         return configuration
     }
 

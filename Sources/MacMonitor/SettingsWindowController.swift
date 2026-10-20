@@ -119,7 +119,7 @@ final class SettingsWindowController: NSWindowController {
     }
 
     private func load() {
-        let configuration = (try? AppConfiguration.loadOrCreate()) ?? AppConfiguration()
+        let configuration = (try? AppConfiguration.loadOrCreateForEditing()) ?? AppConfiguration()
         cameraPopup.removeAllItems()
         cameraPopup.addItem(withTitle: "시스템 기본 카메라")
         cameraPopup.lastItem?.representedObject = ""
@@ -153,6 +153,11 @@ final class SettingsWindowController: NSWindowController {
         statusLabel.stringValue = FileManager.default.fileExists(atPath: AppDirectories.gatewayConfiguration.path)
             ? "HTTPS 게이트웨이 설정 파일이 있습니다."
             : "HTTPS 게이트웨이는 아직 설정되지 않았습니다. 로컬 녹화는 사용할 수 있습니다."
+        do {
+            try configuration.motionRegions.validate()
+        } catch {
+            statusLabel.stringValue += " 기존 감지 영역을 수정하거나 전체 화면으로 초기화한 뒤 저장하세요. " + error.localizedDescription
+        }
     }
 
     @objc private func save() {
@@ -180,7 +185,7 @@ final class SettingsWindowController: NSWindowController {
         var appliedSystemSchedule = false
         do {
             try configuration.validate()
-            let previous = try AppConfiguration.loadOrCreate()
+            let previous = try AppConfiguration.loadOrCreateForEditing()
             guard try PowerScheduleSettings.apply(configuration.sleepSchedule, replacing: previous.sleepSchedule) else { return }
             appliedSystemSchedule = configuration.sleepSchedule.requiresSystemUpdate(replacing: previous.sleepSchedule)
             try configuration.save()

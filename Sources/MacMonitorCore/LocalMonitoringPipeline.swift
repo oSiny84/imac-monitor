@@ -126,8 +126,13 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
             retention.recordMotion(at: observation.timestamp)
             healthReporter?.recordMotion(at: observation.timestamp)
         }
+        let samplingError = detector.takeSamplingError()
         encoder.consume(sampleBuffer: sampleBuffer)
         stateLock.unlock()
+        // Failure handling can stop/restart the pipeline and must run outside its lock.
+        if let samplingError {
+            reportFailure(samplingError)
+        }
     }
 
     public func stop() {

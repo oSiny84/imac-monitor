@@ -5,15 +5,16 @@
       this.video = video; this.status = status; this.metrics = metrics;
       this.policy = new MacMonitorQuality.AdaptiveQuality(mode, Date.now());
       this.generation = 0; this.closed = false; this.failures = 0;
-      this.pc = null; this.resource = null; this.timer = null; this.retry = null; this.abort = null;
+      this.pc = null; this.resource = null; this.timer = null; this.retry = null; this.abort = null; this.authAbort = null;
       this.previous = null; this.progress = null; this.lastProgress = 0; this.goodTicks = 0; this.ticks = 0;
       this.hasPlayed = false; this.autoplayBlocked = false; this.startedAt = 0;
       this.suspended = false;
     }
     async start() {
+      if (this.closed || this.suspended || this.failures > 4 || this.authAbort) return;
       if (typeof RTCPeerConnection === "undefined") { this.status.textContent = "이 브라우저는 WebRTC를 지원하지 않습니다."; return; }
       const generation = this.generation;
-      const authAbort = new AbortController();
+      const authAbort = new AbortController(); this.authAbort = authAbort;
       const timeout = setTimeout(() => authAbort.abort(), 5000);
       try {
         const response = await fetch("/api/session", { credentials: "same-origin", signal: authAbort.signal });
@@ -21,8 +22,8 @@
         if (this.closed || this.suspended || generation !== this.generation) return;
         if (!session?.authenticated) { this.close(); this.status.textContent = "로그인이 필요합니다."; return; }
         if (!this.closed) this.connect();
-      } catch { if (!this.closed && generation === this.generation) this.status.textContent = "인증 확인 실패 · 상위 화면에서 다시 연결하세요."; }
-      finally { clearTimeout(timeout); }
+      } catch { if (!this.closed && !this.suspended && generation === this.generation) this.status.textContent = "인증 확인 실패 · 상위 화면에서 다시 연결하세요."; }
+      finally { clearTimeout(timeout); if (this.authAbort === authAbort) this.authAbort = null; }
     }
     sessionURL(location, endpoint) {
       if (!location) throw new Error("영상 세션 주소가 없습니다.");
@@ -38,6 +39,7 @@
     clearCurrent() {
       if (this.timer) clearInterval(this.timer); this.timer = null;
       if (this.retry) clearTimeout(this.retry); this.retry = null;
+      this.authAbort?.abort(); this.authAbort = null;
       this.abort?.abort(); this.abort = null;
       if (this.pc) { this.pc.ontrack = null; this.pc.onconnectionstatechange = null; this.pc.close(); this.pc = null; }
       this.removeSession(this.resource); this.resource = null;
@@ -45,9 +47,14 @@
       this.previous = null; this.progress = null; this.goodTicks = 0; this.ticks = 0;
       this.hasPlayed = false; this.autoplayBlocked = false;
     }
-    close() { this.closed = true; this.generation++; this.clearCurrent(); }
-    suspend() { this.suspended = true; this.generation++; this.clearCurrent(); this.status.textContent = "백그라운드 · 영상 수신 일시 중단"; }
-    resume() { if (!this.closed && this.suspended) { this.suspended = false; this.policy.changed(Date.now()); if (this.failures <= 4) this.start(); } }
+    close() { if (this.closed) return; this.closed = true; this.generation++; this.clearCurrent(); }
+    suspend() { if (this.closed || this.suspended) return; this.suspended = true; this.generation++; this.clearCurrent(); this.status.textContent = "백그라운드 · 영상 수신 일시 중단"; }
+    resume() {
+      if (this.closed || !this.suspended) return;
+      this.suspended = false; this.policy.changed(Date.now());
+      if (this.failures > 4) this.status.textContent = "영상 연결을 복구하지 못했습니다. 주소·포트·카메라 상태를 확인하고 다시 연결하세요.";
+      else this.start();
+    }
     async gather(pc, signal) {
       if (pc.iceGatheringState === "complete") return;
       await new Promise((resolve, reject) => {
@@ -63,7 +70,7 @@
       });
     }
     async connect() {
-      if (this.closed || this.suspended) return;
+      if (this.closed || this.suspended || this.failures > 4) return;
       const generation = ++this.generation;
       this.clearCurrent();
       const profile = this.policy.profile;
@@ -93,6 +100,10 @@
         const endpoint = new URL(`/live/${profile.path}/whep`, globalThis.location.origin).href;
         const response = await fetch(endpoint, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/sdp" },
           body: pc.localDescription.sdp, signal: abort.signal });
+        if (generation !== this.generation || this.closed || this.suspended) {
+          if (response.status === 201) this.removeSession(this.sessionURL(response.headers.get("Location"), endpoint));
+          return;
+        }
         if (response.status === 401) { this.close(); this.status.textContent = "로그인이 만료되었습니다."; return; }
         if (response.status !== 201) throw new Error(`영상 연결 응답 ${response.status}`);
         const resource = this.sessionURL(response.headers.get("Location"), endpoint);
@@ -169,8 +180,15 @@
     const requested = new URLSearchParams(globalThis.location.search).get("quality");
     const mode = ["auto", "original", "balanced", "low"].includes(requested) ? requested : "auto";
     const player = new LivePlayer(video, document.querySelector("#player-status"), document.querySelector("#player-metrics"), mode);
-    globalThis.addEventListener("pagehide", () => player.close());
-    document.addEventListener("visibilitychange", () => { if (document.hidden) player.suspend(); else player.resume(); });
+    let inPageCache = false;
+    globalThis.addEventListener("pagehide", (event) => {
+      if (event.persisted) { inPageCache = true; player.suspend(); }
+      else player.close();
+    });
+    globalThis.addEventListener("pageshow", (event) => {
+      if (event.persisted) { inPageCache = false; if (!document.hidden) player.resume(); }
+    });
+    document.addEventListener("visibilitychange", () => { if (document.hidden) player.suspend(); else if (!inPageCache) player.resume(); });
     if (document.hidden) player.suspend(); else player.start();
   }
 })();

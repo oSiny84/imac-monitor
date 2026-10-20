@@ -17,7 +17,7 @@ final class MotionRegionEditor: NSWindowController {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 760), styleMask: [.titled], backing: .buffered, defer: false)
         window.title = "움직임 감지·제외 영역"
         super.init(window: window)
-        let note = NSTextField(wrappingLabelWithString: "화면 위에서 드래그해 사각형을 추가하세요. 감지 영역이 없으면 전체 화면을 검사하고 빨간 제외 영역이 우선합니다. 좌상단 기준·좌우 반전 없음. 미리보기는 현재 감시 중인 카메라입니다. 감시 중지 시 검은 화면이며 여기서 카메라를 켜지는 않습니다. 영역은 감지만 제어하며 녹화 영상을 가리지 않습니다.")
+        let note = NSTextField(wrappingLabelWithString: "화면 위에서 드래그해 사각형을 추가하세요. 감지 영역이 없으면 전체 화면을 검사하고 빨간 제외 영역이 우선합니다. 좌상단 기준·좌우 반전 없음. 미리보기는 현재 감시 중인 카메라입니다. 감시 중지 상태에서 열면 검은 화면이며 여기서 카메라를 켜지는 않습니다. 편집 중 감시를 멈추면 마지막 화면이 남을 수 있습니다. 영역은 감지만 제어하며 녹화 영상을 가리지 않습니다.")
         note.textColor = .secondaryLabelColor
         mode.selectedSegment = 0
         canvas.preview = preview
@@ -59,7 +59,7 @@ final class MotionRegionEditor: NSWindowController {
     }
     private func refresh() {
         canvas.regions = regions
-        message.stringValue = "감지 \(regions.detection.count)개 · 제외 \(regions.exclusion.count)개 · 유효 감지 표본 \(regions.activeSampleCount)/2304. 적용 후 설정 창의 저장을 누르고 감시를 재시작하세요."
+        message.stringValue = "감지 \(regions.detection.count)개 · 제외 \(regions.exclusion.count)개 · 유효 감지 표본 \(regions.activeSampleCount)/2304 (720p 기준). 최소 \(MotionRegions.minimumActiveSamples)개, 가로·세로 각각 2줄 이상이 필요합니다. 적용 후 저장하고 감시를 재시작하세요."
     }
     @objc private func undo() { if let previous = history.popLast() { regions = previous; refresh() } }
     @objc private func clear() { history.append(regions); regions = MotionRegions(); refresh() }

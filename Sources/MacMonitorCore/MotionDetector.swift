@@ -14,8 +14,8 @@ public struct MotionConfiguration: Equatable {
         analysisFramesPerSecond: Double = 3,
         pixelDifferenceThreshold: Double = 18,
         changedPixelFraction: Double = 0.025,
-        sampleColumns: Int = 64,
-        sampleRows: Int = 36,
+        sampleColumns: Int = MotionRegions.defaultSampleColumns,
+        sampleRows: Int = MotionRegions.defaultSampleRows,
         regions: MotionRegions = MotionRegions()
     ) {
         self.analysisFramesPerSecond = analysisFramesPerSecond
@@ -33,12 +33,24 @@ public struct MotionObservation: Equatable {
     public let isMotion: Bool
 }
 
+public struct MotionSamplingError: LocalizedError, Equatable {
+    public let activeSamples: Int
+    public let frameWidth: Int
+    public let frameHeight: Int
+
+    public var errorDescription: String? {
+        "현재 카메라 해상도에서 감지 영역을 사용할 수 없습니다(표본 \(activeSamples)개). 가로·세로 각각 2개 이상, 총 16개 이상의 표본을 확보하도록 감지 영역을 넓히거나 제외 영역을 줄이세요."
+    }
+}
+
 /// Low-cost luma detector. A frame-wide brightness offset is removed before comparison,
 /// which reduces false positives when exposure changes or a light is switched on.
 public final class MotionDetector {
     private let configuration: MotionConfiguration
     private var background: [Double] = []
     private var lastAnalysisUptime = -Double.infinity
+    private var samplingLayout: (width: Int, height: Int, mask: MotionSampleMask)?
+    private var pendingSamplingError: MotionSamplingError?
 
     public init(configuration: MotionConfiguration = MotionConfiguration()) {
         self.configuration = configuration
@@ -97,6 +109,16 @@ public final class MotionDetector {
     public func reset() {
         background.removeAll(keepingCapacity: false)
         lastAnalysisUptime = -Double.infinity
+        samplingLayout = nil
+        pendingSamplingError = nil
+    }
+
+    /// Consumed once for each invalid layout. The caller should report this after
+    /// releasing its own pipeline lock, not silently treat a nil analysis as idle.
+    public func takeSamplingError() -> MotionSamplingError? {
+        let error = pendingSamplingError
+        pendingSamplingError = nil
+        return error
     }
 
     private func lumaSamples(from pixelBuffer: CVPixelBuffer) -> [Double]? {
@@ -119,17 +141,20 @@ public final class MotionDetector {
         }
         guard width > 0, height > 0, let baseAddress else { return nil }
 
-        let stepX = max(1, width / max(configuration.sampleColumns, 1))
-        let stepY = max(1, height / max(configuration.sampleRows, 1))
+        if samplingLayout?.width != width || samplingLayout?.height != height {
+            let mask = configuration.regions.samplingMask(width: width, height: height,
+                columns: configuration.sampleColumns, rows: configuration.sampleRows)
+            samplingLayout = (width, height, mask)
+            background.removeAll(keepingCapacity: true)
+            pendingSamplingError = mask.isUsable ? nil : MotionSamplingError(
+                activeSamples: mask.points.count, frameWidth: width, frameHeight: height)
+        }
+        guard let mask = samplingLayout?.mask, mask.isUsable else { return nil }
         let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
         var result: [Double] = []
-        result.reserveCapacity((width / stepX + 1) * (height / stepY + 1))
-        for y in stride(from: stepY / 2, to: height, by: stepY) {
-            let row = bytes.advanced(by: y * bytesPerRow)
-            for x in stride(from: stepX / 2, to: width, by: stepX) {
-                guard configuration.regions.includes(x: (Double(x) + 0.5) / Double(width), y: (Double(y) + 0.5) / Double(height)) else { continue }
-                result.append(Double(row[x]))
-            }
+        result.reserveCapacity(mask.points.count)
+        for point in mask.points {
+            result.append(Double(bytes[point.y * bytesPerRow + point.x]))
         }
         return result
     }

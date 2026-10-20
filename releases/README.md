@@ -1,6 +1,6 @@
 # Mac 테스트 ZIP 다운로드
 
-최신 로컬 구현은 **2026-10-20 기능 1~6 추가본**입니다. 같은 날짜가 여러 개면 파일 이름의 시각이 가장 늦은 ZIP을 받으세요. [감지·제외 영역](../docs/FEATURE_5_MOTION_REGIONS.md), [원격 화질과 자동 조절](../docs/FEATURE_6_REMOTE_QUALITY.md), [기존 구현 안내](../IMPLEMENTATION_PLAN.md)를 참고하세요. GitHub 업로드는 Git 인증 갱신이 필요하며 현재 로컬 커밋/ZIP과 원격 저장소 내용이 다를 수 있습니다. 실제 Mac 빌드·카메라·전원·네트워크 인수는 아직 대기 중입니다.
+최신 로컬 구현은 **2026-10-20 기능 1~6 및 후속 버그 수정본**입니다. 같은 날짜가 여러 개면 파일 이름의 시각이 가장 늦은 ZIP을 받으세요. [최신 수정 기록](../docs/REVIEW_FIXES_2026-10-20.md), [감지·제외 영역](../docs/FEATURE_5_MOTION_REGIONS.md), [원격 화질과 자동 조절](../docs/FEATURE_6_REMOTE_QUALITY.md), [기존 구현 안내](../IMPLEMENTATION_PLAN.md)를 참고하세요. GitHub 업로드는 Git 인증 갱신이 필요하며 현재 로컬 커밋/ZIP과 원격 저장소 내용이 다를 수 있습니다. 실제 Mac 빌드·카메라·전원·네트워크 인수는 아직 대기 중입니다.
 
 이 폴더의 날짜가 가장 최신인 `MacMonitor-Mac-Test-*.zip`을 클릭하고 GitHub의 **Download raw file** 버튼으로 받으세요. GitHub Releases 탭이 아니라 저장소 안의 `releases` 폴더입니다.
 

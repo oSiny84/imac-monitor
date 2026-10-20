@@ -5,12 +5,19 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-function fixture(mode = "auto") {
-  let now = 100000, nextID = 1;
+function fixture(mode = "auto", options = {}) {
+  let now = 100000, nextID = 1, postCount = 0;
   const intervals = new Map(), timeouts = new Map(), requests = [], peers = [];
-  const api = { authenticated: true, postStatus: 201, location: null, blockPost: false, releasePost: null, report: new Map() };
+  const api = { authenticated: true, postStatus: 201, location: null, blockPost: false, releasePost: null,
+    blockSession: false, releaseSessions: [], report: new Map(), ...options.api };
+  const windowEvents = new Map(), documentEvents = new Map();
+  const listen = (events, type, callback) => { if (!events.has(type)) events.set(type, []); events.get(type).push(callback); };
+  const dispatch = (events, type, event = {}) => { for (const callback of events.get(type) || []) callback(event); };
   const video = { paused: true, currentTime: 0, srcObject: null, pause() { this.paused = true; }, play() { this.paused = false; return Promise.resolve(); } };
   const status = {}, metrics = {};
+  const document = { hidden: Boolean(options.hidden),
+    querySelector: (selector) => options.auto ? ({ "#remote-video": video, "#player-status": status, "#player-metrics": metrics }[selector] || null) : null,
+    addEventListener: (type, callback) => listen(documentEvents, type, callback) };
   class Peer {
     constructor(options) { this.options = options; this.iceGatheringState = "complete"; this.connectionState = "new"; peers.push(this); }
     addTransceiver(kind, options) { this.transceiver = { kind, options }; }
@@ -24,8 +31,9 @@ function fixture(mode = "auto") {
   }
   const response = (status, body, location = null) => ({ status, ok: status < 400,
     headers: { get: () => location }, json: async () => body, text: async () => "test SDP answer" });
-  const context = vm.createContext({ console, document: { querySelector: () => null }, URL, URLSearchParams, AbortController,
-    location: { origin: "https://camera.example" }, RTCPeerConnection: Peer,
+  const context = vm.createContext({ console, document, URL, URLSearchParams, AbortController,
+    location: { origin: "https://camera.example", search: `?quality=${mode}` }, RTCPeerConnection: Peer,
+    addEventListener: (type, callback) => listen(windowEvents, type, callback),
     Date: class extends Date { static now() { return now; } },
     setInterval: (callback) => { const id = nextID++; intervals.set(id, callback); return id; },
     clearInterval: (id) => intervals.delete(id),
@@ -33,13 +41,17 @@ function fixture(mode = "auto") {
     clearTimeout: (id) => timeouts.delete(id),
     fetch: async (url, options = {}) => {
       requests.push({ url, options });
-      if (url === "/api/session") return response(200, { authenticated: api.authenticated });
+      if (url === "/api/session") {
+        const result = response(200, { authenticated: api.authenticated });
+        if (api.blockSession) return new Promise((resolve) => api.releaseSessions.push(() => resolve(result)));
+        return result;
+      }
       if (options.method === "DELETE") return response(204, null);
       if (options.method === "POST") {
         const pathName = new URL(url).pathname;
-        const result = () => response(api.postStatus, null, api.location || `${pathName}/session-123`);
-        if (api.blockPost) return new Promise((resolve) => { api.releasePost = () => resolve(result()); });
-        return result();
+        const result = response(api.postStatus, null, api.location || `${pathName}/session-${++postCount}`);
+        if (api.blockPost) return new Promise((resolve) => { api.releasePost = () => resolve(result); });
+        return result;
       }
       throw new Error(`unexpected request ${url}`);
     },
@@ -47,8 +59,10 @@ function fixture(mode = "auto") {
   for (const file of ["live-quality.js", "live-player.js"]) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "../gateway/internal/server/web/assets", file), "utf8"), context);
   }
-  const player = new context.MacMonitorLivePlayer(video, status, metrics, mode);
+  const player = options.auto ? null : new context.MacMonitorLivePlayer(video, status, metrics, mode);
   return { context, player, api, video, status, metrics, requests, peers, intervals, timeouts,
+    event: (type, event) => dispatch(windowEvents, type, event),
+    visibility: (hidden) => { document.hidden = hidden; dispatch(documentEvents, "visibilitychange"); },
     advance: (milliseconds) => { now += milliseconds; },
     now: () => now,
     retry: async () => { const item = [...timeouts.entries()].find(([, value]) => value.delay <= 8000); if (item) { timeouts.delete(item[0]); await item[1].callback(); } },
@@ -200,4 +214,148 @@ test("background suspension closes the peer and resumes only after rechecking th
   f.player.resume(); await flush();
   assert.equal(f.player.closed, true);
   assert.equal(f.peers.length, 1);
+});
+
+test("BFCache lifecycle releases resources and restores only after one fresh authentication check", async () => {
+  const f = fixture("low", { auto: true });
+  await flush();
+  assert.equal(f.peers.length, 1);
+  assert.match(f.requests.find((r) => r.options.method === "POST").url, /live-low/);
+  f.event("pagehide", { persisted: true });
+  assert.equal(f.peers[0].closed, true);
+  assert.equal(f.video.srcObject, null);
+  assert.equal(f.intervals.size, 0);
+  assert.equal(f.requests.filter((r) => r.options.method === "DELETE").length, 1);
+  const before = f.requests.length;
+  // A visible event before pageshow must not start a connection from the cached page.
+  f.visibility(false);
+  assert.equal(f.requests.length, before);
+  f.api.blockSession = true;
+  f.event("pageshow", { persisted: true });
+  f.visibility(false);
+  f.event("pageshow", { persisted: true });
+  assert.equal(f.requests.length, before + 1);
+  assert.equal(f.requests.at(-1).url, "/api/session");
+  assert.equal(f.peers.length, 1);
+  f.api.releaseSessions.shift()(); await flush();
+  assert.equal(f.peers.length, 2);
+  assert.equal(f.peers[1].closed, undefined);
+  assert.equal(f.requests.filter((r) => r.options.method === "POST").length, 2);
+  assert.equal(f.intervals.size, 1);
+});
+
+test("a hidden BFCache restore waits for visibility before authentication and reconnect", async () => {
+  const f = fixture("auto", { auto: true });
+  await flush();
+  f.visibility(true);
+  f.event("pagehide", { persisted: true });
+  const count = f.requests.length;
+  f.event("pageshow", { persisted: true }); await flush();
+  assert.equal(f.requests.length, count);
+  f.visibility(false); await flush();
+  assert.equal(f.requests[count].url, "/api/session");
+  assert.equal(f.peers.length, 2);
+});
+
+test("BFCache restore with an expired session does not create another peer or SDP request", async () => {
+  const f = fixture("auto", { auto: true });
+  await flush();
+  f.event("pagehide", { persisted: true });
+  f.api.authenticated = false;
+  f.event("pageshow", { persisted: true }); await flush();
+  f.visibility(true); f.visibility(false); await flush();
+  assert.match(f.status.textContent, /로그인이 필요/);
+  assert.equal(f.peers.length, 1);
+  assert.equal(f.requests.filter((r) => r.options.method === "POST").length, 1);
+  assert.equal(f.intervals.size, 0);
+  assert.equal(f.timeouts.size, 0);
+});
+
+test("ordinary unload remains permanent even if later lifecycle events are delivered", async () => {
+  const f = fixture("auto", { auto: true });
+  await flush();
+  f.event("pagehide", { persisted: false });
+  const count = f.requests.length;
+  f.event("pageshow", { persisted: true });
+  f.visibility(true); f.visibility(false); await flush();
+  assert.equal(f.requests.length, count);
+  assert.equal(f.peers.length, 1);
+  assert.equal(f.video.srcObject, null);
+  assert.equal(f.intervals.size, 0);
+});
+
+test("a stale authentication response after BFCache restore cannot close or reconnect the new session", async () => {
+  const f = fixture("auto", { auto: true, api: { blockSession: true, authenticated: false } });
+  const staleAuth = f.api.releaseSessions.shift();
+  const oldRequest = f.requests[0];
+  f.event("pagehide", { persisted: true });
+  assert.equal(oldRequest.options.signal.aborted, true);
+  f.api.blockSession = false; f.api.authenticated = true;
+  f.event("pageshow", { persisted: true }); await flush();
+  assert.equal(f.peers.length, 1);
+  staleAuth(); await flush();
+  assert.equal(f.peers.length, 1);
+  assert.equal(f.peers[0].closed, undefined);
+  assert.equal(f.intervals.size, 1);
+  assert.doesNotMatch(f.status.textContent, /로그인이 필요/);
+  assert.equal(f.timeouts.size, 0);
+});
+
+test("a late pre-cache SDP success deletes only its old session and cannot attach media", async () => {
+  const f = fixture("auto", { auto: true, api: { blockPost: true } });
+  await flush();
+  const releaseOld = f.api.releasePost;
+  f.event("pagehide", { persisted: true });
+  f.api.blockPost = false;
+  f.event("pageshow", { persisted: true }); await flush();
+  const restoredMedia = f.video.srcObject;
+  releaseOld(); await flush();
+  assert.equal(f.video.srcObject, restoredMedia);
+  assert.equal(f.peers[0].remoteDescription, undefined);
+  assert.equal(f.peers[1].closed, undefined);
+  const deletions = f.requests.filter((r) => r.options.method === "DELETE");
+  assert.equal(deletions.length, 1);
+  assert.match(deletions[0].url, /session-1$/);
+  assert.equal(f.intervals.size, 1);
+  assert.equal(f.timeouts.size, 0);
+});
+
+test("a late pre-cache unauthorized SDP response does not close the restored connection", async () => {
+  const f = fixture("auto", { auto: true, api: { blockPost: true, postStatus: 401 } });
+  await flush();
+  const releaseOld = f.api.releasePost;
+  f.event("pagehide", { persisted: true });
+  f.api.blockPost = false; f.api.postStatus = 201;
+  f.event("pageshow", { persisted: true }); await flush();
+  releaseOld(); await flush();
+  assert.equal(f.peers[1].closed, undefined);
+  assert.ok(f.video.srcObject);
+  assert.equal(f.intervals.size, 1);
+  assert.doesNotMatch(f.status.textContent, /만료/);
+});
+
+test("BFCache lifecycle does not reset an exhausted retry budget", async () => {
+  const f = fixture("auto", { auto: true, api: { postStatus: 503 } });
+  await flush();
+  for (let i = 0; i < 4; i++) { await f.retry(); await flush(); }
+  assert.match(f.status.textContent, /복구하지 못했습니다/);
+  const count = f.requests.length;
+  f.event("pagehide", { persisted: true });
+  f.event("pageshow", { persisted: true });
+  f.visibility(true); f.visibility(false); await flush();
+  assert.equal(f.requests.length, count);
+  assert.equal(f.peers.length, 5);
+  assert.equal(f.timeouts.size, 0);
+  assert.match(f.status.textContent, /복구하지 못했습니다/);
+});
+
+test("concurrent startup calls share a single authentication check", async () => {
+  const f = fixture();
+  f.api.blockSession = true;
+  const first = f.player.start(), second = f.player.start();
+  assert.equal(f.requests.length, 1);
+  f.api.releaseSessions.shift()();
+  await Promise.all([first, second]); await flush();
+  assert.equal(f.peers.length, 1);
+  assert.equal(f.requests.filter((r) => r.options.method === "POST").length, 1);
 });

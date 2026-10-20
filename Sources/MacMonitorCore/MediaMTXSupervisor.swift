@@ -44,6 +44,12 @@ public final class MediaMTXSupervisor {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = [configurationURL.path]
+        if let ffmpegURL {
+            process.environment = try RemoteStreamProfiles.environment(
+                ffmpegURL: ffmpegURL,
+                inheriting: ProcessInfo.processInfo.environment
+            )
+        }
         process.standardOutput = logHandle
         process.standardError = logHandle
         process.terminationHandler = { [weak self] terminatedProcess in
