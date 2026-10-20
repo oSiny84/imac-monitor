@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import MacMonitorCore
 
 final class SettingsWindowController: NSWindowController {
@@ -22,10 +23,13 @@ final class SettingsWindowController: NSWindowController {
     private let sleepPicker = NSDatePicker()
     private let wakePicker = NSDatePicker()
     private let statusLabel = NSTextField(labelWithString: "")
+    private var motionRegions = MotionRegions()
+    private var regionEditor: MotionRegionEditor?
+    var previewLayerProvider: (() -> AVCaptureVideoPreviewLayer)?
 
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 650, height: 730),
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 780),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -63,6 +67,7 @@ final class SettingsWindowController: NSWindowController {
             row("비디오 비트레이트 (kbps)", bitrateField),
             row("픽셀 차이 임계값", thresholdField),
             row("변화 픽셀 비율", fractionField),
+            row("감지·제외 영역", NSButton(title: "영역 편집…", target: self, action: #selector(editRegions))),
             row("움직임 전 보존", preRollPopup),
             row("마지막 움직임 후 보존", postRollPopup),
             row("보관 기간 (일)", retentionDaysField),
@@ -136,6 +141,7 @@ final class SettingsWindowController: NSWindowController {
         retentionDaysField.integerValue = configuration.retentionDays
         maximumStorageField.doubleValue = configuration.retentionMaxGigabytes
         minimumFreeField.doubleValue = configuration.minimumFreeGigabytes
+        motionRegions = configuration.motionRegions
         selectSeconds(configuration.preRollSeconds, in: preRollPopup)
         selectSeconds(configuration.postRollSeconds, in: postRollPopup)
         scheduleCheckbox.state = configuration.sleepSchedule.enabled ? .on : .off
@@ -168,7 +174,8 @@ final class SettingsWindowController: NSWindowController {
             postRollSeconds: postRollPopup.selectedTag(),
             sleepSchedule: DailySleepSchedule(enabled: scheduleCheckbox.state == .on,
                 sleepMinute: minute(in: sleepPicker), wakeMinute: minute(in: wakePicker),
-                mode: ScheduledRestMode(rawValue: restModePopup.selectedItem?.representedObject as? String ?? "") ?? .systemSleep)
+                mode: ScheduledRestMode(rawValue: restModePopup.selectedItem?.representedObject as? String ?? "") ?? .systemSleep),
+            motionRegions: motionRegions
         )
         var appliedSystemSchedule = false
         do {
@@ -203,6 +210,18 @@ final class SettingsWindowController: NSWindowController {
     }
 
     @objc private func changePassword() { AppPasswordPrompt.change() }
+
+    @objc private func editRegions() {
+        guard let window, regionEditor == nil else { return }
+        let editor = MotionRegionEditor(regions: motionRegions, preview: previewLayerProvider?()) { [weak self, weak window] value in
+            guard let self, let window else { return }
+            if let value { self.motionRegions = value }
+            if let sheet = self.regionEditor?.window { window.endSheet(sheet); sheet.orderOut(nil) }
+            self.regionEditor = nil
+        }
+        regionEditor = editor
+        if let sheet = editor.window { window.beginSheet(sheet) }
+    }
 
     @objc private func openConfigurationFolder() {
         try? AppDirectories.prepare()

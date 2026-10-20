@@ -8,19 +8,22 @@ public struct MotionConfiguration: Equatable {
     public var changedPixelFraction: Double
     public var sampleColumns: Int
     public var sampleRows: Int
+    public var regions: MotionRegions
 
     public init(
         analysisFramesPerSecond: Double = 3,
         pixelDifferenceThreshold: Double = 18,
         changedPixelFraction: Double = 0.025,
         sampleColumns: Int = 64,
-        sampleRows: Int = 36
+        sampleRows: Int = 36,
+        regions: MotionRegions = MotionRegions()
     ) {
         self.analysisFramesPerSecond = analysisFramesPerSecond
         self.pixelDifferenceThreshold = pixelDifferenceThreshold
         self.changedPixelFraction = changedPixelFraction
         self.sampleColumns = sampleColumns
         self.sampleRows = sampleRows
+        self.regions = regions
     }
 }
 
@@ -124,6 +127,7 @@ public final class MotionDetector {
         for y in stride(from: stepY / 2, to: height, by: stepY) {
             let row = bytes.advanced(by: y * bytesPerRow)
             for x in stride(from: stepX / 2, to: width, by: stepX) {
+                guard configuration.regions.includes(x: (Double(x) + 0.5) / Double(width), y: (Double(y) + 0.5) / Double(height)) else { continue }
                 result.append(Double(row[x]))
             }
         }

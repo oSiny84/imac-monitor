@@ -53,6 +53,7 @@
       </section>
 
       <section id="live-view" class="view">
+        <div class="quality-controls"><label for="live-quality">원격 화질</label><select id="live-quality"><option value="auto">자동 조절</option><option value="original">원본 스트림</option><option value="balanced">표준 480p / 10fps</option><option value="low">절약 360p / 8fps</option></select><span class="archive-hint">녹화 화질 유지 · 변경 시 재연결 · 표준/절약 시 추가 인코딩</span></div>
         <div class="video-frame">
           <iframe id="live-player" title="실시간 카메라" allow="autoplay; fullscreen" referrerpolicy="no-referrer"></iframe>
         </div>

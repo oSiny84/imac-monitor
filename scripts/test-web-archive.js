@@ -39,7 +39,7 @@ async function fixture(mediaOnline) {
     "capture-fps", "last-frame", "last-motion", "last-recording", "disk-free", "watchdog-count",
     "recording-from", "recording-to", "recording-filter", "clear-recording-filter", "recording-results", "recording-timezone",
     "previous-recordings", "next-recordings", "recording-page", "protected-only", "protection-summary",
-    "protection-warning", "protection-message", "retention-warning"];
+    "protection-warning", "protection-message", "retention-warning", "live-quality"];
   const elements = Object.fromEntries(ids.map((id) => [id, new Element()]));
   elements["recording-template"].content = { firstElementChild: { cloneNode() {
     const card = new Element();
@@ -314,7 +314,7 @@ test("pending or unreadable protection state disables edits and retention warnin
 
 test("capture stop switches to archive; capture resume leaves archive playback undisturbed", async () => {
   const { elements, api, tick, tab } = await fixture(true);
-  assert.match(elements["live-player"].src, /^\/live\/live\//);
+  assert.match(elements["live-player"].src, /^\/assets\/live\.html\?quality=/);
   api.mediaOnline = false;
   await tick();
   assert.equal(elements["recordings-view"].hidden, false);
@@ -325,7 +325,7 @@ test("capture stop switches to archive; capture resume leaves archive playback u
   assert.equal(elements["live-unavailable"].hidden, true);
   assert.equal(elements["live-player"].src, undefined);
   await tab("live");
-  assert.match(elements["live-player"].src, /^\/live\/live\//);
+  assert.match(elements["live-player"].src, /^\/assets\/live\.html\?quality=/);
 });
 
 test("opening recordings stops the live iframe and polling does not reopen it", async () => {
@@ -375,4 +375,23 @@ test("health distinguishes real frames, planned rest, stalls and stale app data"
   await tick();
   assert.equal(elements["monitor-state"].textContent, "상태 갱신 지연");
   assert.equal(elements["capture-fps"].textContent, "—");
+});
+
+test("quality choices reconnect only the live view and cannot load media after logout", async () => {
+  const { elements, tab } = await fixture(true);
+  elements["live-quality"].value = "low";
+  elements["live-quality"].listeners.change();
+  await flush();
+  assert.match(elements["live-player"].src, /quality=low/);
+  await tab("recordings");
+  elements["live-quality"].value = "original";
+  elements["live-quality"].listeners.change();
+  await flush();
+  assert.equal(elements["live-player"].src, undefined);
+  await tab("live");
+  assert.match(elements["live-player"].src, /quality=original/);
+  await elements.logout.listeners.click();
+  elements["live-quality"].listeners.change();
+  await flush();
+  assert.equal(elements["live-player"].src, undefined);
 });

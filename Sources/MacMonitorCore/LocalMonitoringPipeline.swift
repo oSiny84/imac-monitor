@@ -43,7 +43,8 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
             executableURL: try RuntimeDependencyLocator.mediaMTX(),
             configurationURL: AppDirectories.runtime.appendingPathComponent("mediamtx.yml"),
             logURL: AppDirectories.diagnostics.appendingPathComponent("mediamtx.log"),
-            additionalHosts: configuration.externalWebRTCHosts
+            additionalHosts: configuration.externalWebRTCHosts,
+            ffmpegURL: ffmpegURL
         )
         let reporter = healthReporter
         let retention = RecordingRetentionManager(
@@ -91,7 +92,8 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
         let detector = MotionDetector(
             configuration: MotionConfiguration(
                 pixelDifferenceThreshold: configuration.motionPixelThreshold,
-                changedPixelFraction: configuration.motionChangedFraction
+                changedPixelFraction: configuration.motionChangedFraction,
+                regions: configuration.motionRegions
             )
         )
         stateLock.lock()

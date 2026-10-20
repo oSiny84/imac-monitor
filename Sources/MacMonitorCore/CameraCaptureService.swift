@@ -84,6 +84,22 @@ public final class CameraCaptureService: NSObject, CameraCapturing {
         }
     }
 
+    /// Local user-invoked settings preview only. Reuses the capture session;
+    /// never requests permission, starts capture or changes power state.
+    public func makePreviewLayer() -> AVCaptureVideoPreviewLayer {
+        stateLock.lock()
+        let isActive = active
+        stateLock.unlock()
+        guard isActive else { return AVCaptureVideoPreviewLayer() }
+        let preview = AVCaptureVideoPreviewLayer(session: session)
+        preview.videoGravity = .resizeAspect
+        if let connection = preview.connection, connection.isVideoMirroringSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored = false
+        }
+        return preview
+    }
+
     public func requestAuthorization(completion: @escaping (Bool) -> Void) {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
@@ -204,6 +220,10 @@ public final class CameraCaptureService: NSObject, CameraCapturing {
         }
         session.sessionPreset = .hd1280x720
         session.addOutput(output)
+        if let connection = output.connection(with: .video), connection.isVideoMirroringSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored = false
+        }
         session.commitConfiguration()
 
         do {

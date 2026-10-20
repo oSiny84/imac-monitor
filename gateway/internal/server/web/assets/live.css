@@ -1,0 +1,5 @@
+:root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #000; color: #fff; }
+body { margin: 0; overflow: hidden; }
+video { display: block; width: 100vw; height: 100vh; object-fit: contain; }
+.overlay { position: fixed; top: .5rem; left: .5rem; right: .5rem; pointer-events: none; text-shadow: 0 1px 3px #000; }
+.overlay p { width: fit-content; max-width: 100%; margin: 0 0 .25rem; padding: .3rem .5rem; border-radius: .35rem; background: #000a; font-size: clamp(.65rem, 2vw, .85rem); }

@@ -1,10 +1,12 @@
 import AppKit
+import AVFoundation
 import MacMonitorCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let pipeline: LocalMonitoringPipeline
     private let coordinator: MonitoringCoordinator
     private let healthReporter: MonitoringHealthReporter
+    private let camera: CameraCaptureService
     private let archiveAccess = ArchiveAccessController()
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let statusMenuItem = NSMenuItem(title: "감시 중지됨", action: nil, keyEquivalent: "")
@@ -33,8 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.healthReporter = healthReporter
         let pipeline = LocalMonitoringPipeline(healthReporter: healthReporter)
         self.pipeline = pipeline
-        coordinator = MonitoringCoordinator(
-            camera: CameraCaptureService(
+        let camera = CameraCaptureService(
                 deviceUniqueIDProvider: {
                     (try? AppConfiguration.loadOrCreate())?.cameraUniqueID
                 },
@@ -42,7 +43,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     healthReporter?.recordFrame()
                     pipeline?.consume(sampleBuffer: sampleBuffer)
                 }
-            ),
+            )
+        self.camera = camera
+        coordinator = MonitoringCoordinator(
+            camera: camera,
             idleSleepPreventer: IdleSleepPreventer(),
             pipeline: pipeline
         )
@@ -264,6 +268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openSettings() {
         guard authenticated else { return }
         let controller = settingsWindowController ?? SettingsWindowController()
+        controller.previewLayerProvider = { [weak camera = self.camera] in camera?.makePreviewLayer() ?? AVCaptureVideoPreviewLayer() }
         settingsWindowController = controller
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)

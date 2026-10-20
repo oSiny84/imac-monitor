@@ -50,4 +50,20 @@ final class MotionDetectorTests: XCTestCase {
         }
         return buffer
     }
+
+    func testExcludedOrOutsideMotionDoesNotTriggerAndActiveMotionDoes() throws {
+        let topLeft = MotionRectangle(x: 0, y: 0, width: 0.5, height: 0.5)
+        for regions in [MotionRegions(exclusion: [topLeft]),
+                        MotionRegions(detection: [MotionRectangle(x: 0.5, y: 0, width: 0.5, height: 1)])] {
+            let detector = MotionDetector(configuration: MotionConfiguration(analysisFramesPerSecond: 100,
+                pixelDifferenceThreshold: 10, changedPixelFraction: 0.1, sampleColumns: 8, sampleRows: 8, regions: regions))
+            _ = detector.analyze(pixelBuffer: try pixelBuffer(fill: 80), uptime: 0)
+            XCTAssertEqual(detector.analyze(pixelBuffer: try pixelBuffer(fill: 80, changedQuadrant: true), uptime: 1)?.isMotion, false)
+        }
+        let active = MotionDetector(configuration: MotionConfiguration(analysisFramesPerSecond: 100,
+            pixelDifferenceThreshold: 10, changedPixelFraction: 0.1, sampleColumns: 8, sampleRows: 8,
+            regions: MotionRegions(detection: [MotionRectangle(x: 0, y: 0, width: 1, height: 0.5)])))
+        _ = active.analyze(pixelBuffer: try pixelBuffer(fill: 80), uptime: 0)
+        XCTAssertEqual(active.analyze(pixelBuffer: try pixelBuffer(fill: 80, changedQuadrant: true), uptime: 1)?.isMotion, true)
+    }
 }

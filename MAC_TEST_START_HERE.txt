@@ -11,6 +11,10 @@ HTTPS 설정 뒤 추가 테스트: docs/FEATURE_1_ARCHIVE_ACCESS.md
 추가 테스트와 한계: docs/FEATURE_3_RECORDING_BROWSER.md
 추가 기능 4: 중요 녹화 보호·해제, 자동 정리 제외, 보호만 보기와 공간 경고.
 추가 테스트와 보호 정보 백업 주의: docs/FEATURE_4_RECORDING_PROTECTION.md
+추가 기능 5: 감지·제외 영역 편집 (영역 적용 → 설정 저장 → 감시 재시작).
+사용 방법과 검사: docs/FEATURE_5_MOTION_REGIONS.md
+추가 기능 6: 원격 자동·원본·표준·절약 화질과 수신 통계. 녹화 설정은 유지.
+추가 인코딩·재연결·미검증 범위: docs/FEATURE_6_REMOTE_QUALITY.md
 
 1. 무엇을 옮기나요?
 GitHub 저장소의 releases 폴더에서 최신 MacMonitor-Mac-Test-날짜-시간.zip을

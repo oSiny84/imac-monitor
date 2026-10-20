@@ -31,6 +31,10 @@ func TestRootPageAndEmbeddedAssets(t *testing.T) {
 		{"/", "text/html", "id=\"login-form\""},
 		{"/assets/app.js", "javascript", "showAuthenticated"},
 		{"/assets/styles.css", "text/css", ".video-frame"},
+		{"/assets/live.html", "text/html", "remote-video"},
+		{"/assets/live-player.js", "javascript", "RTCPeerConnection"},
+		{"/assets/live-quality.js", "javascript", "AdaptiveQuality"},
+		{"/assets/live.css", "text/css", ".overlay"},
 	} {
 		t.Run(test.path, func(t *testing.T) {
 			response := httptest.NewRecorder()
@@ -91,6 +95,8 @@ func TestAuthenticationAndProtectedRecordingRange(t *testing.T) {
 		{http.MethodHead, "/recordings/" + name},
 		{http.MethodGet, "/live/live/"},
 		{http.MethodPost, "/live/live/whep"},
+		{http.MethodPost, "/live/live-balanced/whep"},
+		{http.MethodPost, "/live/live-low/whep"},
 		{http.MethodPatch, "/live/live/whep/session-id"},
 		{http.MethodDelete, "/live/live/whep/session-id"},
 		{http.MethodOptions, "/live/live/whep"},

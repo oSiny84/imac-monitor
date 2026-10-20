@@ -24,6 +24,8 @@
   const nextRecordings = document.querySelector("#next-recordings");
   const protectedOnly = document.querySelector("#protected-only");
   const protectionMessage = document.querySelector("#protection-message");
+  const liveQuality = document.querySelector("#live-quality");
+  try { const saved = localStorage.getItem("macmonitor-live-quality"); if (["auto", "original", "balanced", "low"].includes(saved)) liveQuality.value = saved; } catch { /* Private browsing may disable storage. */ }
   document.querySelector("#recording-timezone").textContent = `날짜·시각 기준: 접속 기기 (${Intl.DateTimeFormat().resolvedOptions().timeZone}). 녹화 시작 시각으로 검색합니다.`;
 
   async function request(url, options = {}) {
@@ -82,7 +84,7 @@
   }
 
   function loadLive() {
-    livePlayer.src = `/live/live/?controls=true&muted=true&autoplay=true&t=${Date.now()}`;
+    livePlayer.src = `/assets/live.html?quality=${encodeURIComponent(liveQuality.value || "auto")}&t=${Date.now()}`;
     state.liveLoaded = true;
   }
 
@@ -340,6 +342,11 @@
     try { await request("/api/logout", { method: "POST" }); } finally { showLogin(); }
   });
   document.querySelector("#reload-live").addEventListener("click", () => { stopLive(); refreshStatus(); });
+  liveQuality.addEventListener("change", () => {
+    try { localStorage.setItem("macmonitor-live-quality", liveQuality.value); } catch { /* Preference remains valid for this page. */ }
+    stopLive();
+    if (state.csrfToken && state.view === "live") refreshStatus();
+  });
   document.querySelector("#refresh-recordings").addEventListener("click", () => { state.recordingOffset = 0; refreshRecordings(); });
 
   for (const tab of document.querySelectorAll(".tab")) {

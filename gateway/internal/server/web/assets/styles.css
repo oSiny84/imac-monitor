@@ -7,7 +7,10 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 70% 0%, #24312b 0, #0b0e0c 38rem); }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
+.quality-controls { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem; margin-bottom: .75rem; }
+.quality-controls label { margin: 0; }
+.quality-controls select { padding: .5rem; border-radius: .5rem; border: 1px solid #ffffff25; background: #121713; color: #eef3ef; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .4; }
 .shell { width: min(100%, 74rem); margin: 0 auto; padding: max(1.25rem, env(safe-area-inset-top)) 1rem 3rem; }

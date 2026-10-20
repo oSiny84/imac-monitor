@@ -12,6 +12,7 @@ public struct AppConfiguration: Codable, Equatable {
     public var preRollSeconds: Int
     public var postRollSeconds: Int
     public var sleepSchedule: DailySleepSchedule
+    public var motionRegions: MotionRegions
 
     public init(
         cameraUniqueID: String? = nil,
@@ -24,7 +25,8 @@ public struct AppConfiguration: Codable, Equatable {
         minimumFreeGigabytes: Double = 5,
         preRollSeconds: Int = 30,
         postRollSeconds: Int = 30,
-        sleepSchedule: DailySleepSchedule = DailySleepSchedule()
+        sleepSchedule: DailySleepSchedule = DailySleepSchedule(),
+        motionRegions: MotionRegions = MotionRegions()
     ) {
         self.cameraUniqueID = cameraUniqueID
         self.externalWebRTCHosts = externalWebRTCHosts
@@ -37,6 +39,7 @@ public struct AppConfiguration: Codable, Equatable {
         self.preRollSeconds = preRollSeconds
         self.postRollSeconds = postRollSeconds
         self.sleepSchedule = sleepSchedule
+        self.motionRegions = motionRegions
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -44,6 +47,7 @@ public struct AppConfiguration: Codable, Equatable {
         case motionPixelThreshold, motionChangedFraction, retentionDays
         case retentionMaxGigabytes, minimumFreeGigabytes
         case preRollSeconds, postRollSeconds, sleepSchedule
+        case motionRegions
     }
 
     public init(from decoder: Decoder) throws {
@@ -60,6 +64,7 @@ public struct AppConfiguration: Codable, Equatable {
         preRollSeconds = try values.decodeIfPresent(Int.self, forKey: .preRollSeconds) ?? 5
         postRollSeconds = try values.decodeIfPresent(Int.self, forKey: .postRollSeconds) ?? 15
         sleepSchedule = try values.decodeIfPresent(DailySleepSchedule.self, forKey: .sleepSchedule) ?? DailySleepSchedule()
+        motionRegions = try values.decodeIfPresent(MotionRegions.self, forKey: .motionRegions) ?? MotionRegions()
     }
 
     public static func loadOrCreate() throws -> AppConfiguration {
@@ -94,6 +99,7 @@ public struct AppConfiguration: Codable, Equatable {
             throw AppConfigurationError.invalid("움직임 전 0~300초 / 후 5~300초")
         }
         try sleepSchedule.validate()
+        try motionRegions.validate()
         guard (250...10_000).contains(videoBitrateKbps) else {
             throw AppConfigurationError.invalid("videoBitrateKbps")
         }

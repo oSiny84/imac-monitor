@@ -8,6 +8,7 @@ public final class MediaMTXSupervisor {
     private let configurationURL: URL
     private let logURL: URL
     private let additionalHosts: [String]
+    private let ffmpegURL: URL?
     private let stateLock = NSLock()
     private var process: Process?
     private var logHandle: FileHandle?
@@ -17,12 +18,14 @@ public final class MediaMTXSupervisor {
         executableURL: URL,
         configurationURL: URL,
         logURL: URL,
-        additionalHosts: [String]
+        additionalHosts: [String],
+        ffmpegURL: URL? = nil
     ) {
         self.executableURL = executableURL
         self.configurationURL = configurationURL
         self.logURL = logURL
         self.additionalHosts = additionalHosts
+        self.ffmpegURL = ffmpegURL
     }
 
     public func start() throws {
@@ -107,8 +110,18 @@ public final class MediaMTXSupervisor {
     }
 
     private func writeConfiguration() throws {
+        let configuration = try Self.configuration(additionalHosts: additionalHosts, ffmpegURL: ffmpegURL)
+        try Data(configuration.utf8).write(to: configurationURL, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: configurationURL.path
+        )
+    }
+
+    static func configuration(additionalHosts: [String], ffmpegURL: URL?) throws -> String {
         let hosts = additionalHosts.map { "\"\($0)\"" }.joined(separator: ", ")
-        let configuration = """
+        let paths = try ffmpegURL.map { try RemoteStreamProfiles.paths(ffmpegURL: $0) } ?? "  live:\n    source: publisher\n"
+        return """
         logLevel: info
         logDestinations: [stdout]
         logStructured: false
@@ -129,17 +142,12 @@ public final class MediaMTXSupervisor {
         webrtcLocalTCPAddress: :8189
         webrtcIPsFromInterfaces: true
         webrtcAdditionalHosts: [\(hosts)]
+        webrtcICEServers2: []
+        webrtcTrackGatherTimeout: 10s
         srt: false
         moq: false
         paths:
-          live:
-            source: publisher
-        """
-        try Data(configuration.utf8).write(to: configurationURL, options: .atomic)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: configurationURL.path
-        )
+        """ + "\n" + paths
     }
 
     deinit {

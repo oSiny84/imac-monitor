@@ -304,7 +304,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		if strings.HasPrefix(request.URL.Path, "/live/") {
 			writer.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' blob:; media-src 'self' blob:")
 		} else {
-			writer.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; media-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'self'")
+			writer.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; media-src 'self' blob:; frame-src 'self'; base-uri 'none'; form-action 'self'")
 		}
 		next.ServeHTTP(writer, request)
 	})
