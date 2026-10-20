@@ -204,7 +204,7 @@ func (s *Server) status(writer http.ResponseWriter, request *http.Request) {
 	probeURL.Path = "/"
 	probeRequest, _ := http.NewRequestWithContext(request.Context(), http.MethodGet, probeURL.String(), nil)
 	response, err := s.httpClient.Do(probeRequest)
-	mediaReachable := err == nil
+	mediaReachable := err == nil && response != nil && response.StatusCode >= 200 && response.StatusCode < 400
 	if response != nil {
 		response.Body.Close()
 	}

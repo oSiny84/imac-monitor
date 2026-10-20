@@ -3,6 +3,8 @@ MacMonitor — Mac에서 처음 테스트하기
 
 2026-10-20 재점검 수정본입니다. 이전 ZIP 대신 새 폴더에 압축 해제해서 사용하세요.
 변경·검사 기록: docs/RECHECK_2026-10-20.md
+추가 기능 1: 감시 중지·화면 전용 휴식 중 과거 녹화의 원격 접근 유지.
+HTTPS 설정 뒤 추가 테스트: docs/FEATURE_1_ARCHIVE_ACCESS.md
 
 1. 무엇을 옮기나요?
 GitHub 저장소의 releases 폴더에서 최신 MacMonitor-Mac-Test-날짜-시간.zip을

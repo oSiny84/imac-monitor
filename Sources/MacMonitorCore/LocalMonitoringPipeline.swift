@@ -9,7 +9,6 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
     private var retention: RecordingRetentionManager?
     private var mediaServer: MediaMTXSupervisor?
     private var encoder: FFmpegPipeline?
-    private var gateway: GatewaySupervisor?
     private var starting = false
     private var started = false
 
@@ -61,14 +60,10 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
                 bitrateKbps: configuration.videoBitrateKbps
             )
         )
-        let gateway = GatewaySupervisor()
         mediaServer.failureHandler = { [weak self] error in
             self?.reportFailure(error)
         }
         encoder.failureHandler = { [weak self] error in
-            self?.reportFailure(error)
-        }
-        gateway.failureHandler = { [weak self] error in
             self?.reportFailure(error)
         }
 
@@ -76,11 +71,9 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
             try mediaServer.start()
             try retention.start()
             try encoder.start()
-            _ = try gateway.startIfConfigured()
         } catch {
             encoder.stop()
             retention.stopAndFinalize()
-            gateway.stop()
             mediaServer.stop()
             throw error
         }
@@ -96,7 +89,6 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
             stateLock.unlock()
             encoder.stop()
             retention.stopAndFinalize()
-            gateway.stop()
             mediaServer.stop()
             throw LocalMonitoringPipelineError.startCancelled
         }
@@ -104,7 +96,6 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
         self.retention = retention
         self.mediaServer = mediaServer
         self.encoder = encoder
-        self.gateway = gateway
         started = true
         starting = false
         stateLock.unlock()
@@ -138,16 +129,13 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
         let retention = self.retention
         let mediaServer = self.mediaServer
         let encoder = self.encoder
-        let gateway = self.gateway
         self.detector = nil
         self.retention = nil
         self.encoder = nil
-        self.gateway = nil
         self.mediaServer = nil
         stateLock.unlock()
         encoder?.stop()
         retention?.stopAndFinalize()
-        gateway?.stop()
         mediaServer?.stop()
         detector?.reset()
     }

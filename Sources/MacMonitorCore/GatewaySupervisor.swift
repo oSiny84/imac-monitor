@@ -1,10 +1,14 @@
 import Darwin
 import Foundation
 
-public final class GatewaySupervisor {
-    public var failureHandler: ((Error) -> Void)?
+public final class GatewaySupervisor: ArchiveGatewayControlling {
+    public var failureHandler: ((Error) -> Void)? {
+        get { stateLock.lock(); defer { stateLock.unlock() }; return storedFailureHandler }
+        set { stateLock.lock(); defer { stateLock.unlock() }; storedFailureHandler = newValue }
+    }
 
     private let stateLock = NSLock()
+    private var storedFailureHandler: ((Error) -> Void)?
     private var process: Process?
     private var logHandle: FileHandle?
     private var stopping = false
@@ -39,7 +43,7 @@ public final class GatewaySupervisor {
             self.stateLock.lock()
             let ownsProcess = self.process.map { $0 === terminatedProcess } ?? false
             let unexpected = ownsProcess && !self.stopping
-            let failureHandler = self.failureHandler
+            let failureHandler = self.storedFailureHandler
             self.stateLock.unlock()
             if unexpected {
                 failureHandler?(GatewaySupervisorError.unexpectedExit(terminatedProcess.terminationStatus))

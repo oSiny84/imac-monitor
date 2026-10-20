@@ -4,8 +4,10 @@ import MacMonitorCore
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let pipeline: LocalMonitoringPipeline
     private let coordinator: MonitoringCoordinator
+    private let archiveAccess = ArchiveAccessController()
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let statusMenuItem = NSMenuItem(title: "감시 중지됨", action: nil, keyEquivalent: "")
+    private let archiveMenuItem = NSMenuItem(title: "원격 녹화 — 확인 중", action: nil, keyEquivalent: "")
     private let startMenuItem = NSMenuItem(title: "감시 시작", action: #selector(startMonitoring), keyEquivalent: "s")
     private let stopMenuItem = NSMenuItem(title: "감시 중지", action: #selector(stopMonitoring), keyEquivalent: "x")
     private var readyToTerminate = false
@@ -63,6 +65,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
+        archiveMenuItem.isEnabled = false
+        menu.addItem(archiveMenuItem)
         menu.addItem(.separator())
         menu.addItem(startMenuItem)
         menu.addItem(stopMenuItem)
@@ -75,6 +79,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         settingsItem.target = self
         menu.addItem(settingsItem)
+
+        let restartWebItem = NSMenuItem(title: "원격 웹 다시 시작", action: #selector(restartWeb), keyEquivalent: "")
+        restartWebItem.target = self
+        menu.addItem(restartWebItem)
 
         let openLogsItem = NSMenuItem(
             title: "진단 로그 폴더 열기",
@@ -98,6 +106,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.render(state)
         }
         render(.idle)
+        archiveAccess.onStateChange = { [weak self] state in self?.renderArchiveAccess(state) }
+        archiveAccess.start()
         let center = NSWorkspace.shared.notificationCenter
         center.addObserver(self, selector: #selector(willSleep), name: NSWorkspace.willSleepNotification, object: nil)
         center.addObserver(self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
@@ -121,7 +131,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scheduleTimer?.invalidate()
         displaySleep.cancel()
         displayOnlySleepPreventer.release()
-        coordinator.stop { [weak self] in
+        let stopped = DispatchGroup()
+        stopped.enter()
+        coordinator.stop { stopped.leave() }
+        stopped.enter()
+        archiveAccess.stop { stopped.leave() }
+        stopped.notify(queue: .main) { [weak self] in
             self?.readyToTerminate = true
             NSApp.reply(toApplicationShouldTerminate: true)
         }
@@ -130,6 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func startMonitoring() {
         guard authenticated else { return }
+        archiveAccess.refresh()
         monitoringWanted = true
         // Also allows an explicit retry after the coordinator exhausted recovery attempts.
         monitoringRequested = false
@@ -151,6 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if schedule.enabled { monitoringWanted = true }
             }
             evaluateSchedule()
+            archiveAccess.refresh()
         } catch { AppPasswordPrompt.showError(error.localizedDescription) }
     }
 
@@ -158,12 +175,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         displaySleep.cancel()
         sleepStartedAt = Date()
         systemSleeping = true
+        archiveAccess.stop()
         reconcileMonitoring()
     }
 
     @objc private func didWake() {
         guard authenticated, !terminating else { return }
         systemSleeping = false
+        archiveAccess.start()
         let now = Date()
         if let start = sleepStartedAt, schedule.crossesResumeTime(from: start, to: now) {
             monitoringWanted = true
@@ -245,6 +264,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    @objc private func restartWeb() {
+        guard authenticated, !terminating, !systemSleeping else { return }
+        archiveAccess.restart()
+    }
+
+    private func renderArchiveAccess(_ state: ArchiveAccessState) {
+        switch state {
+        case .stopped: archiveMenuItem.title = "원격 녹화 — 중지됨"
+        case .notConfigured: archiveMenuItem.title = "원격 녹화 — HTTPS 설정 필요"
+        case .starting: archiveMenuItem.title = "원격 녹화 — 연결 준비 중"
+        case .running: archiveMenuItem.title = "원격 녹화 — 웹 서버 실행 중"
+        case let .failed(message): archiveMenuItem.title = "원격 녹화 오류 — \(message)"
+        }
     }
 
     private func render(_ state: MonitoringState) {

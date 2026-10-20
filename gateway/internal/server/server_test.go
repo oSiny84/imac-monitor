@@ -189,3 +189,102 @@ func TestLoginRequiresConfiguredOrigin(t *testing.T) {
 		t.Fatalf("login without origin returned %d", response.Code)
 	}
 }
+
+func TestArchiveRemainsAuthenticatedAndPlayableWhenMediaStops(t *testing.T) {
+	media := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer media.Close()
+	directory := t.TempDir()
+	name := "motion-20261020T120000.mp4"
+	if err := os.WriteFile(filepath.Join(directory, name), []byte("0123456789"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashPassword("correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		PublicOrigin: "https://camera.example", MediaMTXURL: media.URL,
+		RecordingsDirectory: directory, PasswordHash: hash,
+		SessionIdleMinutes: 30, SessionMaxHours: 24,
+	}
+	server, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := server.Handler()
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/login",
+		strings.NewReader(`{"password":"correct horse battery staple"}`))
+	loginRequest.Header.Set("Origin", cfg.PublicOrigin)
+	login := httptest.NewRecorder()
+	handler.ServeHTTP(login, loginRequest)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login: %d", login.Code)
+	}
+	cookie := login.Result().Cookies()[0]
+
+	for _, mediaRunning := range []bool{true, false} {
+		if !mediaRunning {
+			media.Close()
+		} // Simulate a capture stop or display-only rest.
+		for _, endpoint := range []string{"/api/status", "/api/session", "/api/recordings", "/recordings/" + name} {
+			request := httptest.NewRequest(http.MethodGet, endpoint, nil)
+			request.AddCookie(cookie)
+			if strings.HasPrefix(endpoint, "/recordings/") {
+				request.Header.Set("Range", "bytes=2-5")
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if strings.HasPrefix(endpoint, "/recordings/") {
+				if response.Code != http.StatusPartialContent || response.Body.String() != "2345" {
+					t.Fatalf("archive playback with media running=%v: %d %q", mediaRunning, response.Code, response.Body.String())
+				}
+				continue
+			}
+			if response.Code != http.StatusOK {
+				t.Fatalf("%s: %d", endpoint, response.Code)
+			}
+			var result map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if endpoint == "/api/status" && result["mediaReachable"] != mediaRunning {
+				t.Fatalf("wrong live availability: %v", result)
+			}
+			if endpoint == "/api/session" && result["authenticated"] != true {
+				t.Fatal("capture stop invalidated the web session")
+			}
+			if endpoint == "/api/recordings" && !strings.Contains(response.Body.String(), name) {
+				t.Fatal("recording missing during capture rest")
+			}
+		}
+	}
+	unauthenticated := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, "/recordings/"+name, nil))
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatal("archive lost authentication during rest")
+	}
+}
+
+func TestMediaHTTPFailureIsNotReportedAsLiveAvailable(t *testing.T) {
+	media := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer media.Close()
+	server, err := New(config.Config{MediaMTXURL: media.URL, RecordingsDirectory: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	server.status(response, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	var result struct {
+		MediaReachable bool `json:"mediaReachable"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.MediaReachable {
+		t.Fatal("HTTP 503 must not launch the live player")
+	}
+}
