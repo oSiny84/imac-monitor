@@ -41,6 +41,7 @@
       <section class="monitoring-panel" aria-label="실제 감시 상태">
         <p id="monitor-state" class="status-dot" role="status">감시 상태 확인 중</p>
         <p id="monitor-detail" class="monitor-detail"></p>
+        <p id="retention-warning" class="archive-notice" role="status" hidden></p>
         <dl class="monitoring-grid">
           <div><dt>실제 수신 FPS</dt><dd id="capture-fps">—</dd></div>
           <div><dt>마지막 프레임</dt><dd id="last-frame">—</dd></div>
@@ -72,10 +73,15 @@
         <form id="recording-filter" class="recording-filter">
           <div><label for="recording-from">시작 날짜</label><input id="recording-from" type="date"></div>
           <div><label for="recording-to">끝 날짜 (포함)</label><input id="recording-to" type="date"></div>
+          <label class="protected-filter"><input id="protected-only" type="checkbox">보호된 녹화만</label>
           <button type="submit">날짜 검색</button>
-          <button id="clear-recording-filter" class="secondary" type="button">전체 날짜</button>
+          <button id="clear-recording-filter" class="secondary" type="button">전체 보기</button>
         </form>
         <p id="recording-timezone" class="archive-hint"></p>
+        <p class="archive-hint">보호된 녹화는 기간·용량·여유 공간 정리에서 제외됩니다. 저장 공간을 계속 차지하므로 중요한 영상은 별도 백업하세요.</p>
+        <p id="protection-summary" class="archive-hint"></p>
+        <p id="protection-warning" class="archive-notice" role="status" hidden></p>
+        <p id="protection-message" class="archive-hint" role="status" aria-live="polite"></p>
         <p id="recording-results" class="archive-hint" role="status" aria-live="polite"></p>
         <div id="recordings" class="recordings"></div>
         <p id="recordings-empty" class="empty" hidden>저장된 움직임 녹화가 없습니다.</p>
@@ -95,9 +101,9 @@
           <span class="thumbnail-placeholder">미리보기 준비 중</span>
           <img class="recording-thumbnail" alt="" loading="lazy" decoding="async" width="320" height="180">
         </span>
-        <span class="recording-description"><span class="recording-date"></span><span class="recording-size"></span><span class="archive-hint">눌러서 재생 / 닫기</span></span>
+        <span class="recording-description"><span class="recording-date"></span><span class="recording-size"></span><span class="recording-protection-state archive-hint"></span><span class="archive-hint">눌러서 재생 / 닫기</span></span>
       </button>
-      <div class="recording-actions"><a class="recording-download secondary" download>원본 MP4 다운로드</a></div>
+      <div class="recording-actions"><button class="recording-protect secondary" type="button">중요 녹화로 보호</button><a class="recording-download secondary" download>원본 MP4 다운로드</a></div>
       <video controls preload="none" playsinline hidden></video>
     </article>
   </template>

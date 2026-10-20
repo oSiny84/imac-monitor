@@ -22,6 +22,7 @@ struct MonitoringHealthSnapshot: Codable {
     var diskFreeBytes: Int64?
     let watchdogRecoveries: Int
     let lastRecoveryAt: Date?
+    let retentionWarning: String?
 }
 
 /// A small private, atomically replaced status file is read by the independent
@@ -45,6 +46,7 @@ public final class MonitoringHealthReporter {
     private var lastRecoveryAt: Date?
     private var stallHandler: (() -> Void)?
     private var reportedWriteError = false // queue-owned
+    private var retentionWarning: String?
 
     public var onStall: (() -> Void)? {
         get { lock.lock(); defer { lock.unlock() }; return stallHandler }
@@ -101,6 +103,11 @@ public final class MonitoringHealthReporter {
     public func recordMotion(at date: Date) {
         lock.lock(); defer { lock.unlock() }
         lastMotionAt = date
+    }
+
+    public func recordRetentionWarning(_ warning: String?) {
+        lock.lock(); defer { lock.unlock() }
+        retentionWarning = warning
     }
 
     public func recordRecording(at url: URL, completedAt date: Date = Date()) {
@@ -182,7 +189,8 @@ public final class MonitoringHealthReporter {
             captureFPS: activity.takeFPS(at: uptime), totalFrames: activity.frames,
             lastMotionAt: lastMotionAt, lastRecordingAt: lastRecordingAt,
             lastRecordingName: lastRecordingName, diskFreeBytes: nil,
-            watchdogRecoveries: watchdogRecoveries, lastRecoveryAt: lastRecoveryAt)
+            watchdogRecoveries: watchdogRecoveries, lastRecoveryAt: lastRecoveryAt,
+            retentionWarning: retentionWarning)
     }
 
     private func write(_ snapshot: MonitoringHealthSnapshot) {

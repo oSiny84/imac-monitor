@@ -2,7 +2,7 @@
 
 ## 상태와 작업 경계
 
-- 기능 추가 순위 1~6 중 **1·2·3 구현 완료**: 감시 독립 HTTPS 녹화 접근, 실제 카메라 프레임/FPS·최근 사건·디스크 상태판과 프레임 단절 자동 복구, 날짜 검색·지연 로딩 썸네일·원본 다운로드를 추가했다. 순위 4~6은 아직 구현하지 않았다. 검증 범위는 `docs/FEATURE_1_ARCHIVE_ACCESS.md`, `docs/FEATURE_2_MONITORING_HEALTH.md`, `docs/FEATURE_3_RECORDING_BROWSER.md` 참조. Swift 및 Mac 실기 검증은 대기 중이다.
+- 기능 추가 순위 1~6 중 **1·2·3·4 구현 완료**: 감시 독립 HTTPS 녹화 접근, 실제 프레임/FPS·사건·디스크 상태판과 프레임 단절 복구, 날짜 검색·썸네일·원본 다운로드, 중요 녹화 보호·자동 정리 제외와 공간 경고를 추가했다. 순위 5~6은 아직 구현하지 않았다. 검증 범위는 `docs/FEATURE_1_ARCHIVE_ACCESS.md`부터 `docs/FEATURE_4_RECORDING_PROTECTION.md`까지 참조. Swift 및 Mac 실기 검증은 대기 중이다.
 - 2026-10-20 Mac 실기 전 재점검: MediaMTX 체크섬 파서·Go 검색 경로·웹 첫 화면 리디렉션·녹화 현지 시각·감시 콜백 경쟁·공유 영상 세그먼트·인코더 파이프·예약 복귀 처리를 수정했다. 실행한 검사와 Mac 미검증 범위는 `docs/RECHECK_2026-10-20.md`에 기록했다.
 - 2026-10-07 사용자의 구현 시작 지시에 따라 1차 하드웨어 검증 프로브 구현을 시작했다.
 - 현재 구현됨: macOS 메뉴 막대 앱, AVFoundation 캡처, 움직임 감지, 단일 H.264 인코딩과 MP4/RTSP tee, 전후 구간 보존 및 보관 정책, MediaMTX WebRTC, 인증 HTTPS 게이트웨이, 모바일 실시간/녹화 UI, 의존성/빌드 스크립트.

@@ -119,6 +119,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/status", s.requireSession(http.HandlerFunc(s.status)))
 	mux.Handle("GET /api/recordings", s.requireSession(http.HandlerFunc(s.listRecordings)))
 	mux.Handle("GET /api/recordings/{id}/thumbnail", s.requireSession(http.HandlerFunc(s.serveThumbnail)))
+	mux.Handle("PUT /api/recordings/{id}/protection", s.requireSession(http.HandlerFunc(s.setRecordingProtection)))
 	mux.Handle("GET /recordings/{id}", s.requireSession(http.HandlerFunc(s.serveRecording)))
 	mux.Handle("HEAD /recordings/{id}", s.requireSession(http.HandlerFunc(s.serveRecording)))
 	liveHandler := s.requireSession(http.HandlerFunc(s.proxyLive))

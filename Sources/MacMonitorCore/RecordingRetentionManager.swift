@@ -44,24 +44,30 @@ public final class RecordingRetentionManager {
     private let queue = DispatchQueue(label: "com.macmonitor.recording-retention")
     private var timer: DispatchSourceTimer?
     private var motionWindows: [MotionWindow] = []
+    private let onWarning: ((String?) -> Void)?
+    private var lastWarning: String?
+    private var publishedWarning = false
 
-    public init(spoolDirectory: URL, recordingsDirectory: URL, policy: RetentionPolicy) {
+    public init(spoolDirectory: URL, recordingsDirectory: URL, policy: RetentionPolicy, onWarning: ((String?) -> Void)? = nil) {
         self.spoolDirectory = spoolDirectory
         self.recordingsDirectory = recordingsDirectory
         self.policy = policy
         eventMerger = nil
+        self.onWarning = onWarning
     }
 
     init(
         spoolDirectory: URL,
         recordingsDirectory: URL,
         policy: RetentionPolicy,
-        eventMerger: RecordingEventMerging
+        eventMerger: RecordingEventMerging,
+        onWarning: ((String?) -> Void)? = nil
     ) {
         self.spoolDirectory = spoolDirectory
         self.recordingsDirectory = recordingsDirectory
         self.policy = policy
         self.eventMerger = eventMerger
+        self.onWarning = onWarning
     }
 
     public func start() throws {
@@ -184,8 +190,20 @@ public final class RecordingRetentionManager {
     }
 
     private func enforceRetention(now: Date) {
+        let protections = RecordingProtectionStore(directory: recordingsDirectory)
+        do {
+            try protections.withExclusiveLock {
+                try enforceUnlockedRetention(now: now, protections: protections)
+            }
+        } catch {
+            reportRetentionWarning("보호 상태 확인 또는 잠금 실패 · 자동 삭제를 보류합니다. 저장 공간과 진단 로그를 확인하세요.")
+        }
+    }
+
+    private func enforceUnlockedRetention(now: Date, protections: RecordingProtectionStore) throws {
         var recordings = files(in: recordingsDirectory).sorted { $0.start < $1.start }
         for file in recordings where now.timeIntervalSince(file.start) > policy.maximumAge {
+            guard !(try protections.isProtected(file.url)) else { continue }
             try? FileManager.default.removeItem(at: file.url)
         }
         recordings = files(in: recordingsDirectory).sorted { $0.start < $1.start }
@@ -194,6 +212,7 @@ public final class RecordingRetentionManager {
         var freeBytes = availableBytes()
         for file in recordings {
             guard totalBytes > policy.maximumBytes || freeBytes < policy.minimumFreeBytes else { break }
+            guard !(try protections.isProtected(file.url)) else { continue }
             do {
                 try FileManager.default.removeItem(at: file.url)
                 totalBytes -= file.size
@@ -202,6 +221,17 @@ public final class RecordingRetentionManager {
                 continue
             }
         }
+        if totalBytes > policy.maximumBytes || freeBytes < policy.minimumFreeBytes {
+            reportRetentionWarning("보관 용량 또는 디스크 여유 기준을 충족하지 못했습니다. 보호된 영상은 삭제하지 않습니다. 백업 후 보호 해제 또는 공간 확보가 필요하며 새 녹화가 실패할 수 있습니다.")
+        } else { reportRetentionWarning(nil) }
+    }
+
+    private func reportRetentionWarning(_ value: String?) {
+        guard !publishedWarning || value != lastWarning else { return }
+        publishedWarning = true
+        lastWarning = value
+        if let value { NSLog("MacMonitor retention: %@", value) }
+        onWarning?(value)
     }
 
     private func files(in directory: URL) -> [OwnedFile] {

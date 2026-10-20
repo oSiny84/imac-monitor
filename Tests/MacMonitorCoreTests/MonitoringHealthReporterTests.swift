@@ -20,10 +20,12 @@ final class MonitoringHealthReporterTests: XCTestCase {
         reporter.recordFrame()
         reporter.recordMotion(at: Date())
         reporter.recordRecording(at: recordings.appendingPathComponent("motion-test.mp4"))
+        reporter.recordRetentionWarning("Test disk warning")
         reporter.updateState(.running(info)) // publish without resetting this session's frame counter
         waitForSnapshot(at: status) {
             $0["state"] as? String == "running" && $0["totalFrames"] as? Int == 1 &&
-                $0["lastMotionAt"] != nil && $0["lastRecordingName"] as? String == "motion-test.mp4"
+                $0["lastMotionAt"] != nil && $0["lastRecordingName"] as? String == "motion-test.mp4" &&
+                $0["retentionWarning"] as? String == "Test disk warning"
         }
         let permissions = try FileManager.default.attributesOfItem(atPath: status.path)[.posixPermissions] as? NSNumber
         XCTAssertEqual(permissions?.intValue, 0o600)

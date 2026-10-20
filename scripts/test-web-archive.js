@@ -14,6 +14,7 @@ class Element {
     this.listeners = {};
     this.value = "";
     this.disabled = false;
+    this.checked = false;
     const classes = new Set();
     this.classList = {
       add: (value) => classes.add(value), remove: (value) => classes.delete(value),
@@ -37,12 +38,13 @@ async function fixture(mediaOnline) {
     "logout", "reload-live", "refresh-recordings", "live-view", "recordings-view", "monitor-state", "monitor-detail",
     "capture-fps", "last-frame", "last-motion", "last-recording", "disk-free", "watchdog-count",
     "recording-from", "recording-to", "recording-filter", "clear-recording-filter", "recording-results", "recording-timezone",
-    "previous-recordings", "next-recordings", "recording-page"];
+    "previous-recordings", "next-recordings", "recording-page", "protected-only", "protection-summary",
+    "protection-warning", "protection-message", "retention-warning"];
   const elements = Object.fromEntries(ids.map((id) => [id, new Element()]));
   elements["recording-template"].content = { firstElementChild: { cloneNode() {
     const card = new Element();
     card.video = new Element();
-    const fields = Object.fromEntries([".recording-date", ".recording-size", ".recording-summary", ".recording-thumbnail", ".thumbnail-placeholder", ".recording-download"]
+    const fields = Object.fromEntries([".recording-date", ".recording-size", ".recording-summary", ".recording-thumbnail", ".thumbnail-placeholder", ".recording-download", ".recording-protect", ".recording-protection-state"]
       .map((selector) => [selector, new Element()]));
     card.image = fields[".recording-thumbnail"];
     card.querySelector = (selector) => selector === "video" ? card.video : fields[selector];
@@ -56,24 +58,40 @@ async function fixture(mediaOnline) {
     addEventListener() {},
   };
   const api = { mediaOnline, blocked: false, release: null, interval: null, monitoring: null,
+    confirmUnprotect: true, protectionRequests: [], blockProtection: false, finishProtection: null, failProtection: false,
     recordingRequests: [], blockRecordings: false, pendingRecordings: [], recordings: [
       { id: "example.mp4", startedAt: "2026-10-20T03:00:00Z", sizeBytes: 1024, url: "/recordings/example.mp4",
+        protected: false, protectionSupported: true, protectionAvailable: true,
         thumbnailURL: "/api/recordings/example.mp4/thumbnail", downloadURL: "/recordings/example.mp4?download=1" },
     ] };
-  const response = (body) => ({ ok: true, headers: { get: () => "application/json" }, json: async () => body });
-  const fetch = async (url) => {
+  const response = (body, status = 200) => ({ ok: status < 400, status, headers: { get: () => "application/json" }, json: async () => body });
+  const fetch = async (url, options = {}) => {
     if (url === "/api/session") return response({ authenticated: true, csrfToken: "session-one" });
     if (url === "/api/logout") return response({ authenticated: false });
     if (url.startsWith("/api/recordings?")) {
       api.recordingRequests.push(url);
       const query = new URL(url, "https://camera.example").searchParams;
       const items = api.recordings.filter((item) => (!query.has("from") || item.startedAt >= query.get("from")) &&
-        (!query.has("to") || item.startedAt < query.get("to")));
+        (!query.has("to") || item.startedAt < query.get("to")) && (!query.has("protected") || item.protected));
       const offset = Number(query.get("offset"));
       const limit = Number(query.get("limit"));
-      const result = { recordings: items.slice(offset, offset + limit), total: items.length, hasMore: offset + limit < items.length };
+      const protectedItems = api.recordings.filter((item) => item.protected);
+      const result = { recordings: items.slice(offset, offset + limit), total: items.length, hasMore: offset + limit < items.length,
+        protectedCount: protectedItems.length, protectedBytes: protectedItems.reduce((sum, item) => sum + item.sizeBytes, 0) };
       if (api.blockRecordings) return new Promise((resolve) => api.pendingRecordings.push(() => resolve(response(result))));
       return response(result);
+    }
+    if (url.endsWith("/protection")) {
+      api.protectionRequests.push({ url, options });
+      const finish = () => {
+        if (api.failProtection) return response({ error: "보호 저장 실패" }, 503);
+        const value = JSON.parse(options.body).protected;
+        const id = decodeURIComponent(url.split("/")[3]);
+        api.recordings.find((item) => item.id === id).protected = value;
+        return response({ protected: value });
+      };
+      if (api.blockProtection) return new Promise((resolve) => { api.finishProtection = () => resolve(finish()); });
+      return finish();
     }
     if (url === "/api/status") {
       if (api.blocked) return new Promise((resolve) => { api.release = () => resolve(response({ mediaReachable: api.mediaOnline, monitoring: api.monitoring })); });
@@ -82,6 +100,7 @@ async function fixture(mediaOnline) {
     throw new Error(`unexpected request ${url}`);
   };
   const context = vm.createContext({ document, fetch, Headers, Intl, Date, URLSearchParams,
+    confirm: () => api.confirmUnprotect,
     setInterval: (callback) => { api.interval = callback; },
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../gateway/internal/server/web/assets/app.js"), "utf8"), context);
@@ -197,6 +216,100 @@ test("logout releases media and a late archive response cannot restore private c
   await flush();
   assert.equal(elements.recordings.children.length, 0);
   assert.equal(elements.app.hidden, true);
+});
+
+test("protect writes explicit state with CSRF, prevents duplicate clicks and survives list refresh", async () => {
+  const { elements, api } = await fixture(false);
+  api.blockProtection = true;
+  let button = elements.recordings.children[0].querySelector(".recording-protect");
+  assert.equal(button.disabled, false);
+  const saving = button.listeners.click();
+  button.listeners.click();
+  await flush();
+  assert.equal(api.protectionRequests.length, 1);
+  const write = api.protectionRequests[0];
+  assert.equal(write.options.method, "PUT");
+  assert.equal(write.options.headers.get("X-CSRF-Token"), "session-one");
+  assert.deepEqual(JSON.parse(write.options.body), { protected: true });
+  elements["refresh-recordings"].listeners.click();
+  await flush();
+  button = elements.recordings.children[0].querySelector(".recording-protect");
+  assert.equal(button.disabled, true);
+  api.finishProtection();
+  await saving;
+  await flush();
+  button = elements.recordings.children[0].querySelector(".recording-protect");
+  assert.equal(button.textContent, "보호 해제");
+  assert.equal(button.disabled, false);
+  assert.match(elements.recordings.children[0].querySelector(".recording-protection-state").textContent, /보호 중/);
+  assert.match(elements["protection-summary"].textContent, /1개 · 1.0 KB/);
+});
+
+test("protected-only search and confirmation guard unprotect; cancel never writes", async () => {
+  const { elements, api } = await fixture(false);
+  await elements.recordings.children[0].querySelector(".recording-protect").listeners.click();
+  await flush();
+  elements["protected-only"].checked = true;
+  elements["recording-filter"].listeners.submit({ preventDefault() {} });
+  await flush();
+  assert.equal(new URL(api.recordingRequests.at(-1), "https://camera.example").searchParams.get("protected"), "1");
+  api.confirmUnprotect = false;
+  const count = api.protectionRequests.length;
+  await elements.recordings.children[0].querySelector(".recording-protect").listeners.click();
+  assert.equal(api.protectionRequests.length, count);
+  api.confirmUnprotect = true;
+  await elements.recordings.children[0].querySelector(".recording-protect").listeners.click();
+  await flush();
+  assert.equal(elements.recordings.children.length, 0);
+  assert.match(elements["protection-message"].textContent, /해제했습니다/);
+  elements["clear-recording-filter"].listeners.click();
+  await flush();
+  assert.equal(elements["protected-only"].checked, false);
+  assert.equal(elements.recordings.children.length, 1);
+});
+
+test("failed protection stays unprotected and pending write after logout cannot restore private UI", async () => {
+  const { elements, api } = await fixture(false);
+  api.failProtection = true;
+  await elements.recordings.children[0].querySelector(".recording-protect").listeners.click();
+  await flush();
+  assert.match(elements["protection-message"].textContent, /저장 실패/);
+  assert.equal(elements.recordings.children[0].querySelector(".recording-protect").textContent, "중요 녹화로 보호");
+  api.failProtection = false;
+  api.blockProtection = true;
+  const pending = elements.recordings.children[0].querySelector(".recording-protect").listeners.click();
+  await flush();
+  await elements.logout.listeners.click();
+  api.finishProtection();
+  await pending;
+  await flush();
+  assert.equal(elements.app.hidden, true);
+  assert.equal(elements.recordings.children.length, 0);
+  assert.equal(elements["protection-message"].textContent, "");
+});
+
+test("pending or unreadable protection state disables edits and retention warnings distinguish stale reports", async () => {
+  const { elements, api, tick } = await fixture(false);
+  api.recordings[0].protectionSupported = false;
+  elements["refresh-recordings"].listeners.click();
+  await flush();
+  assert.equal(elements.recordings.children[0].querySelector(".recording-protect").disabled, true);
+  api.recordings[0].protectionSupported = true;
+  api.recordings[0].protectionAvailable = false;
+  elements["refresh-recordings"].listeners.click();
+  await flush();
+  assert.equal(elements.recordings.children[0].querySelector(".recording-protect").disabled, true);
+  assert.match(elements.recordings.children[0].querySelector(".recording-protection-state").textContent, /확인 불가/);
+  api.monitoring = { available: true, fresh: true, state: "stopped", retentionWarning: "공간 부족" };
+  await tick();
+  assert.equal(elements["retention-warning"].hidden, false);
+  assert.match(elements["retention-warning"].textContent, /공간 부족/);
+  api.monitoring.fresh = false;
+  await tick();
+  assert.match(elements["retention-warning"].textContent, /갱신 지연/);
+  api.monitoring.retentionWarning = "";
+  await tick();
+  assert.equal(elements["retention-warning"].hidden, true);
 });
 
 test("capture stop switches to archive; capture resume leaves archive playback undisturbed", async () => {

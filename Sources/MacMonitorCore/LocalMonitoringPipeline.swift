@@ -58,7 +58,8 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
             ),
             eventMerger: FFmpegRecordingEventMerger(executableURL: ffmpegURL, onCompleted: { [weak reporter] url in
                 reporter?.recordRecording(at: url)
-            })
+            }),
+            onWarning: { [weak reporter] warning in reporter?.recordRetentionWarning(warning) }
         )
         let encoder = FFmpegPipeline(
             configuration: FFmpegPipelineConfiguration(

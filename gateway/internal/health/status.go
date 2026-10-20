@@ -24,6 +24,7 @@ type Snapshot struct {
 	DiskFreeBytes      *int64     `json:"diskFreeBytes,omitempty"`
 	WatchdogRecoveries int        `json:"watchdogRecoveries"`
 	LastRecoveryAt     *time.Time `json:"lastRecoveryAt,omitempty"`
+	RetentionWarning   string     `json:"retentionWarning,omitempty"`
 }
 
 type Status struct {

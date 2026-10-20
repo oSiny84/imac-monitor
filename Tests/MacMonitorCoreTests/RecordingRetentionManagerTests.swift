@@ -48,7 +48,7 @@ final class RecordingRetentionManagerTests: XCTestCase {
         }
         manager.recordMotion(at: base)
         manager.runMaintenance(now: base.addingTimeInterval(150))
-        let names = try FileManager.default.contentsOfDirectory(atPath: recordings.path).sorted()
+        let names = try visibleNames(in: recordings).sorted()
         let expected = [-60, -30, 0, 25].map {
             "segment-\(timestamp(base.addingTimeInterval(Double($0)))).mp4"
         }.sorted()
@@ -69,7 +69,7 @@ final class RecordingRetentionManagerTests: XCTestCase {
         let name = "segment-\(timestamp(now.addingTimeInterval(-120))).mp4"
         try Data("quiet".utf8).write(to: spool.appendingPathComponent(name))
         manager.runMaintenance(now: now)
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: recordings.path), [])
+        XCTAssertEqual(try visibleNames(in: recordings), [])
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: spool.path), [])
     }
 
@@ -235,6 +235,11 @@ final class RecordingRetentionManagerTests: XCTestCase {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd'T'HHmmss"
         return formatter.string(from: date)
+    }
+
+    private func visibleNames(in directory: URL) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            .map(\.lastPathComponent)
     }
 }
 

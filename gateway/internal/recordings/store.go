@@ -14,12 +14,15 @@ import (
 var safeRecordingID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,199}\.mp4$`)
 
 type Recording struct {
-	ID           string    `json:"id"`
-	StartedAt    time.Time `json:"startedAt"`
-	SizeBytes    int64     `json:"sizeBytes"`
-	URL          string    `json:"url"`
-	ThumbnailURL string    `json:"thumbnailURL"`
-	DownloadURL  string    `json:"downloadURL"`
+	ID                  string    `json:"id"`
+	StartedAt           time.Time `json:"startedAt"`
+	SizeBytes           int64     `json:"sizeBytes"`
+	URL                 string    `json:"url"`
+	ThumbnailURL        string    `json:"thumbnailURL"`
+	DownloadURL         string    `json:"downloadURL"`
+	Protected           bool      `json:"protected"`
+	ProtectionSupported bool      `json:"protectionSupported"`
+	ProtectionAvailable bool      `json:"protectionAvailable"`
 }
 
 type Store struct {
@@ -40,6 +43,11 @@ func NewStore(directory string) (*Store, error) {
 }
 
 func (s *Store) List() ([]Recording, error) {
+	root, err := os.OpenRoot(s.directory)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
 	entries, err := os.ReadDir(s.directory)
 	if err != nil {
 		return nil, err
@@ -53,6 +61,7 @@ func (s *Store) List() ([]Recording, error) {
 		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
+		protected, protectionErr := protectionState(root, entry.Name())
 		recordings = append(recordings, Recording{
 			ID:           entry.Name(),
 			StartedAt:    recordingTime(entry.Name(), info),
@@ -60,6 +69,7 @@ func (s *Store) List() ([]Recording, error) {
 			URL:          "/recordings/" + entry.Name(),
 			ThumbnailURL: "/api/recordings/" + entry.Name() + "/thumbnail",
 			DownloadURL:  "/recordings/" + entry.Name() + "?download=1",
+			Protected:    protected, ProtectionSupported: supportsProtection(entry.Name()), ProtectionAvailable: protectionErr == nil,
 		})
 	}
 	sort.Slice(recordings, func(i, j int) bool {
@@ -105,12 +115,16 @@ func (s *Store) Open(id string) (*os.File, fs.FileInfo, error) {
 type Query struct {
 	From, To      time.Time // Inclusive from, exclusive to; zero means unbounded.
 	Offset, Limit int
+	ProtectedOnly bool
 }
 
 type Page struct {
-	Recordings []Recording `json:"recordings"`
-	Total      int         `json:"total"`
-	HasMore    bool        `json:"hasMore"`
+	Recordings        []Recording `json:"recordings"`
+	Total             int         `json:"total"`
+	HasMore           bool        `json:"hasMore"`
+	ProtectedCount    int         `json:"protectedCount"`
+	ProtectedBytes    int64       `json:"protectedBytes"`
+	ProtectionWarning string      `json:"protectionWarning,omitempty"`
 }
 
 func (s *Store) Search(query Query) (Page, error) {
@@ -119,7 +133,18 @@ func (s *Store) Search(query Query) (Page, error) {
 		return Page{}, err
 	}
 	filtered := make([]Recording, 0)
+	page := Page{}
 	for _, item := range items {
+		if item.Protected && item.ProtectionAvailable {
+			page.ProtectedCount++
+			page.ProtectedBytes += item.SizeBytes
+		}
+		if !item.ProtectionAvailable {
+			page.ProtectionWarning = "보호 상태 확인 불가 · 자동 삭제는 안전을 위해 보류됩니다. iMac 진단 로그와 보호 메타데이터를 확인하세요."
+		}
+		if query.ProtectedOnly && !(item.Protected && item.ProtectionAvailable) {
+			continue
+		}
 		if !query.From.IsZero() && item.StartedAt.Before(query.From) {
 			continue
 		}
@@ -134,7 +159,8 @@ func (s *Store) Search(query Query) (Page, error) {
 	}
 	start := min(max(query.Offset, 0), len(filtered))
 	end := start + min(limit, len(filtered)-start)
-	return Page{Recordings: filtered[start:end], Total: len(filtered), HasMore: end < len(filtered)}, nil
+	page.Recordings, page.Total, page.HasMore = filtered[start:end], len(filtered), end < len(filtered)
+	return page, nil
 }
 
 func recordingTime(name string, fallback fs.FileInfo) time.Time {

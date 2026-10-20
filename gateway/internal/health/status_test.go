@@ -13,7 +13,7 @@ func TestReadFramesGracePauseStaleAndUnknownStates(t *testing.T) {
 	now := time.Date(2026, 10, 20, 5, 0, 0, 0, time.UTC)
 	ago := func(seconds int) *time.Time { value := now.Add(-time.Duration(seconds) * time.Second); return &value }
 	base := Snapshot{SchemaVersion: 1, UpdatedAt: &now, State: "running", ExpectingFrames: true,
-		CaptureStartedAt: ago(30), LastFrameAt: ago(1), CaptureFPS: 15, TotalFrames: 20}
+		CaptureStartedAt: ago(30), LastFrameAt: ago(1), CaptureFPS: 15, TotalFrames: 20, RetentionWarning: "disk pressure; protected files retained"}
 	for _, tc := range []struct {
 		name          string
 		change        func(*Snapshot)
@@ -50,6 +50,9 @@ func TestReadFramesGracePauseStaleAndUnknownStates(t *testing.T) {
 			}
 			if result.FrameState == "inactive" && result.CaptureFPS != 0 {
 				t.Fatal("paused FPS must be zero")
+			}
+			if result.Available && result.RetentionWarning != base.RetentionWarning {
+				t.Fatal("retention warning was discarded")
 			}
 		})
 	}

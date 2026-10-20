@@ -57,7 +57,11 @@ form button { width: 100%; margin-top: 1rem; }
 .recording-thumbnail { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
 .thumbnail-placeholder { display: flex; align-items: center; justify-content: center; height: 100%; padding: .5rem; color: #91a096; font-size: .75rem; text-align: center; }
 .recording-description { display: grid; gap: .4rem; flex: 1; }
-.recording-actions { display: flex; justify-content: flex-end; padding: 0 1rem .75rem; }
+.recording-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; padding: 0 1rem .75rem; }
+.recording-protect { font-size: .85rem; }
+.recording-protection-state.protected { color: #e1cfa4; }
+.protected-filter { display: flex; gap: .5rem; align-items: center; min-height: 3rem; font-size: .85rem; }
+.protected-filter input { width: 1.1rem; min-height: 1.1rem; margin: 0; accent-color: #83e2ad; }
 .recording-download { display: inline-flex; align-items: center; padding: .5rem .75rem; border-radius: .5rem; text-decoration: none; font-size: .85rem; }
 .recording-download:focus-visible, button:focus-visible { outline: 2px solid #83e2ad; outline-offset: 3px; }
 .recording-pages { display: flex; align-items: center; justify-content: center; gap: 1rem; margin-top: 1rem; font-size: .85rem; }

@@ -2,7 +2,8 @@
   "use strict";
 
   const state = { csrfToken: "", liveLoaded: false, view: "live", mediaReachable: null, statusCheck: 0, recordingsCheck: 0,
-    recordingOffset: 0, recordingLimit: 50, recordingRange: {}, recordingsLoading: false, recordingHasMore: false };
+    recordingOffset: 0, recordingLimit: 50, recordingRange: {}, recordingsLoading: false, recordingHasMore: false,
+    protectionWrites: new Set() };
   const loginPanel = document.querySelector("#login-panel");
   const app = document.querySelector("#app");
   const connection = document.querySelector("#connection");
@@ -21,6 +22,8 @@
   const recordingResults = document.querySelector("#recording-results");
   const previousRecordings = document.querySelector("#previous-recordings");
   const nextRecordings = document.querySelector("#next-recordings");
+  const protectedOnly = document.querySelector("#protected-only");
+  const protectionMessage = document.querySelector("#protection-message");
   document.querySelector("#recording-timezone").textContent = `날짜·시각 기준: 접속 기기 (${Intl.DateTimeFormat().resolvedOptions().timeZone}). 녹화 시작 시각으로 검색합니다.`;
 
   async function request(url, options = {}) {
@@ -61,6 +64,11 @@
     clearRecordings();
     recordingFrom.value = "";
     recordingTo.value = "";
+    protectedOnly.checked = false;
+    state.protectionWrites = new Set();
+    protectionMessage.textContent = "";
+    document.querySelector("#protection-summary").textContent = "";
+    document.querySelector("#protection-warning").hidden = true;
     state.recordingOffset = 0;
     state.recordingRange = {};
     state.recordingHasMore = false;
@@ -148,6 +156,9 @@
     document.querySelector("#last-recording").textContent = formatTime(health?.lastRecordingAt);
     document.querySelector("#disk-free").textContent = available && Number.isFinite(health.diskFreeBytes) ? formatBytes(health.diskFreeBytes) : "—";
     document.querySelector("#watchdog-count").textContent = available && Number.isInteger(health.watchdogRecoveries) ? `${health.watchdogRecoveries}회` : "—";
+    const retentionWarning = document.querySelector("#retention-warning");
+    retentionWarning.hidden = !available || !health.retentionWarning;
+    retentionWarning.textContent = available && health.retentionWarning ? `${fresh ? "최근 보관 점검: " : "마지막 보고된 경고 (갱신 지연): "}${health.retentionWarning}` : "";
   }
 
   function formatTime(value) {
@@ -165,6 +176,7 @@
     state.recordingsLoading = true;
     updateRecordingPages();
     recordingResults.textContent = "녹화 검색 중…";
+    document.querySelector("#protection-summary").textContent = "보호 현황 확인 중…";
     recordingsEmpty.textContent = "조건에 맞는 녹화가 없습니다.";
     recordingsEmpty.hidden = true;
     try {
@@ -173,6 +185,10 @@
       if (state.csrfToken !== session || check !== state.recordingsCheck) return;
       recordingsEmpty.hidden = result.recordings.length !== 0;
       state.recordingHasMore = result.hasMore;
+      document.querySelector("#protection-summary").textContent = `전체 보관함 보호: ${result.protectedCount}개 · ${formatBytes(result.protectedBytes)}`;
+      const protectionWarning = document.querySelector("#protection-warning");
+      protectionWarning.hidden = !result.protectionWarning;
+      protectionWarning.textContent = result.protectionWarning || "";
       const start = result.recordings.length ? state.recordingOffset + 1 : 0;
       recordingResults.textContent = `총 ${result.total}개 · ${start}–${start ? state.recordingOffset + result.recordings.length : 0} 표시`;
       for (const recording of result.recordings) {
@@ -185,6 +201,33 @@
         const download = card.querySelector(".recording-download");
         download.href = recording.downloadURL;
         download.download = recording.id;
+        const protect = card.querySelector(".recording-protect");
+        const protectionLabel = card.querySelector(".recording-protection-state");
+        protect.textContent = recording.protected ? "보호 해제" : "중요 녹화로 보호";
+        protect.disabled = !recording.protectionSupported || !recording.protectionAvailable || state.protectionWrites.has(recording.id);
+        protectionLabel.textContent = !recording.protectionAvailable ? "보호 상태 확인 불가" :
+          !recording.protectionSupported ? "정리 중 · 완성 후 보호 가능" : recording.protected ? "보호 중 · 자동 삭제 제외" : "보관 기준에 따라 자동 정리";
+        protectionLabel.classList.toggle("protected", recording.protected && recording.protectionAvailable);
+        protect.addEventListener("click", async () => {
+          if (protect.disabled || state.protectionWrites.has(recording.id)) return;
+          const targetProtected = !recording.protected;
+          if (!targetProtected && !confirm("보호를 해제하면 다음 자동 정리에서 이 녹화가 삭제될 수 있습니다. 중요한 영상은 먼저 다운로드하세요. 보호를 해제할까요?")) return;
+          const writes = state.protectionWrites;
+          writes.add(recording.id);
+          protect.disabled = true;
+          protectionMessage.textContent = "보호 설정 저장 중…";
+          try {
+            await request(`/api/recordings/${encodeURIComponent(recording.id)}/protection`, {
+              method: "PUT", body: JSON.stringify({ protected: targetProtected }),
+            });
+            if (state.csrfToken === session) protectionMessage.textContent = targetProtected ? "중요 녹화로 보호했습니다. 자동 삭제에서 제외됩니다." : "보호를 해제했습니다. 이제 자동 정리 대상입니다.";
+          } catch (error) {
+            if (state.csrfToken === session) protectionMessage.textContent = error.message;
+          } finally {
+            writes.delete(recording.id);
+            if (state.csrfToken === session) refreshRecordings();
+          }
+        });
         const image = card.querySelector(".recording-thumbnail");
         const placeholder = card.querySelector(".thumbnail-placeholder");
         image.addEventListener("load", () => { placeholder.hidden = true; });
@@ -211,6 +254,7 @@
       recordingsEmpty.textContent = error.message;
       recordingsEmpty.hidden = false;
       recordingResults.textContent = "녹화 목록을 불러오지 못했습니다. 새로고침해 주세요.";
+      document.querySelector("#protection-summary").textContent = "보호 현황 확인 불가";
       state.recordingHasMore = false;
     } finally {
       if (state.csrfToken === session && check === state.recordingsCheck) {
@@ -250,13 +294,14 @@
       const range = {};
       if (recordingFrom.value) range.from = dateBoundary(recordingFrom.value, false);
       if (recordingTo.value) range.to = dateBoundary(recordingTo.value, true);
+      if (protectedOnly.checked) range.protected = "1";
       state.recordingRange = range;
       state.recordingOffset = 0;
       refreshRecordings();
     } catch (error) { recordingResults.textContent = error.message; }
   });
   document.querySelector("#clear-recording-filter").addEventListener("click", () => {
-    recordingFrom.value = ""; recordingTo.value = "";
+    recordingFrom.value = ""; recordingTo.value = ""; protectedOnly.checked = false;
     state.recordingRange = {}; state.recordingOffset = 0;
     refreshRecordings();
   });

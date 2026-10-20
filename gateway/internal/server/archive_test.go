@@ -55,7 +55,7 @@ func TestArchiveSearchValidationDownloadAndProtectedThumbnails(t *testing.T) {
 	if thumbnails.calls != 0 {
 		t.Fatal("thumbnail processing ran before authentication")
 	}
-	for _, query := range []string{"from=garbage", "from=2026-10-21T00:00:00Z&to=2026-10-20T00:00:00Z", "limit=0", "limit=101", "offset=-1", "offset=9999999999999999999999999999999999", "limit=1&limit=2"} {
+	for _, query := range []string{"from=garbage", "from=2026-10-21T00:00:00Z&to=2026-10-20T00:00:00Z", "limit=0", "limit=101", "offset=-1", "offset=9999999999999999999999999999999999", "limit=1&limit=2", "protected=no", "protected=1&protected=1"} {
 		request := httptest.NewRequest("GET", "/api/recordings?"+query, nil)
 		request.AddCookie(cookie)
 		response := httptest.NewRecorder()
