@@ -69,8 +69,21 @@
           </div>
           <button id="refresh-recordings" class="secondary" type="button">새로고침</button>
         </div>
+        <form id="recording-filter" class="recording-filter">
+          <div><label for="recording-from">시작 날짜</label><input id="recording-from" type="date"></div>
+          <div><label for="recording-to">끝 날짜 (포함)</label><input id="recording-to" type="date"></div>
+          <button type="submit">날짜 검색</button>
+          <button id="clear-recording-filter" class="secondary" type="button">전체 날짜</button>
+        </form>
+        <p id="recording-timezone" class="archive-hint"></p>
+        <p id="recording-results" class="archive-hint" role="status" aria-live="polite"></p>
         <div id="recordings" class="recordings"></div>
         <p id="recordings-empty" class="empty" hidden>저장된 움직임 녹화가 없습니다.</p>
+        <nav class="recording-pages" aria-label="녹화 페이지">
+          <button id="previous-recordings" class="secondary" type="button" disabled>이전</button>
+          <span id="recording-page"></span>
+          <button id="next-recordings" class="secondary" type="button" disabled>다음</button>
+        </nav>
       </section>
     </div>
   </main>
@@ -78,10 +91,14 @@
   <template id="recording-template">
     <article class="recording-card">
       <button class="recording-summary" type="button">
-        <span class="recording-date"></span>
-        <span class="recording-size"></span>
+        <span class="recording-preview">
+          <span class="thumbnail-placeholder">미리보기 준비 중</span>
+          <img class="recording-thumbnail" alt="" loading="lazy" decoding="async" width="320" height="180">
+        </span>
+        <span class="recording-description"><span class="recording-date"></span><span class="recording-size"></span><span class="archive-hint">눌러서 재생 / 닫기</span></span>
       </button>
-      <video controls preload="metadata" playsinline></video>
+      <div class="recording-actions"><a class="recording-download secondary" download>원본 MP4 다운로드</a></div>
+      <video controls preload="none" playsinline hidden></video>
     </article>
   </template>
 </body>

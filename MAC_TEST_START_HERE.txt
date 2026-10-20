@@ -7,6 +7,8 @@ MacMonitor — Mac에서 처음 테스트하기
 HTTPS 설정 뒤 추가 테스트: docs/FEATURE_1_ARCHIVE_ACCESS.md
 추가 기능 2: 실제 프레임·FPS·녹화·디스크 상태와 프레임 단절 복구.
 추가 테스트와 한계: docs/FEATURE_2_MONITORING_HEALTH.md
+추가 기능 3: 녹화 날짜 검색·작은 미리보기·원본 MP4 다운로드·페이지 이동.
+추가 테스트와 한계: docs/FEATURE_3_RECORDING_BROWSER.md
 
 1. 무엇을 옮기나요?
 GitHub 저장소의 releases 폴더에서 최신 MacMonitor-Mac-Test-날짜-시간.zip을

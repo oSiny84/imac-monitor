@@ -33,6 +33,7 @@ type Server struct {
 	sessions     *auth.SessionStore
 	loginLimiter *auth.LoginLimiter
 	recordings   *recordings.Store
+	thumbnails   thumbnailSource
 	mediaTarget  *url.URL
 	mediaProxy   *httputil.ReverseProxy
 	httpClient   *http.Client
@@ -100,6 +101,7 @@ func New(cfg config.Config) (*Server, error) {
 		sessions:     auth.NewSessionStore(cfg.SessionIdleTTL(), cfg.SessionMaxTTL()),
 		loginLimiter: auth.NewLoginLimiter(),
 		recordings:   store,
+		thumbnails:   recordings.NewThumbnails(store),
 		mediaTarget:  mediaTarget,
 		mediaProxy:   proxy,
 		httpClient:   &http.Client{Timeout: 2 * time.Second},
@@ -116,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/logout", s.requireSession(http.HandlerFunc(s.logout)))
 	mux.Handle("GET /api/status", s.requireSession(http.HandlerFunc(s.status)))
 	mux.Handle("GET /api/recordings", s.requireSession(http.HandlerFunc(s.listRecordings)))
+	mux.Handle("GET /api/recordings/{id}/thumbnail", s.requireSession(http.HandlerFunc(s.serveThumbnail)))
 	mux.Handle("GET /recordings/{id}", s.requireSession(http.HandlerFunc(s.serveRecording)))
 	mux.Handle("HEAD /recordings/{id}", s.requireSession(http.HandlerFunc(s.serveRecording)))
 	liveHandler := s.requireSession(http.HandlerFunc(s.proxyLive))
@@ -218,12 +221,17 @@ func (s *Server) status(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (s *Server) listRecordings(writer http.ResponseWriter, request *http.Request) {
-	items, err := s.recordings.List()
+	query, err := parseRecordingQuery(request)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "날짜 또는 페이지 범위가 올바르지 않습니다.")
+		return
+	}
+	page, err := s.recordings.Search(query)
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, "녹화 목록을 읽을 수 없습니다.")
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"recordings": items})
+	writeJSON(writer, http.StatusOK, page)
 }
 
 func (s *Server) serveRecording(writer http.ResponseWriter, request *http.Request) {
@@ -240,6 +248,9 @@ func (s *Server) serveRecording(writer http.ResponseWriter, request *http.Reques
 	defer file.Close()
 	writer.Header().Set("Content-Type", "video/mp4")
 	writer.Header().Set("Content-Disposition", `inline; filename="`+path.Base(id)+`"`)
+	if request.URL.Query().Get("download") == "1" {
+		writer.Header().Set("Content-Disposition", `attachment; filename="`+path.Base(id)+`"`)
+	}
 	writer.Header().Set("Cache-Control", "private, no-store")
 	http.ServeContent(writer, request, id, info.ModTime(), file)
 }

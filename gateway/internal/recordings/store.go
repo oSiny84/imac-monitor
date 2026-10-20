@@ -14,10 +14,12 @@ import (
 var safeRecordingID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,199}\.mp4$`)
 
 type Recording struct {
-	ID        string    `json:"id"`
-	StartedAt time.Time `json:"startedAt"`
-	SizeBytes int64     `json:"sizeBytes"`
-	URL       string    `json:"url"`
+	ID           string    `json:"id"`
+	StartedAt    time.Time `json:"startedAt"`
+	SizeBytes    int64     `json:"sizeBytes"`
+	URL          string    `json:"url"`
+	ThumbnailURL string    `json:"thumbnailURL"`
+	DownloadURL  string    `json:"downloadURL"`
 }
 
 type Store struct {
@@ -52,13 +54,18 @@ func (s *Store) List() ([]Recording, error) {
 			continue
 		}
 		recordings = append(recordings, Recording{
-			ID:        entry.Name(),
-			StartedAt: recordingTime(entry.Name(), info),
-			SizeBytes: info.Size(),
-			URL:       "/recordings/" + entry.Name(),
+			ID:           entry.Name(),
+			StartedAt:    recordingTime(entry.Name(), info),
+			SizeBytes:    info.Size(),
+			URL:          "/recordings/" + entry.Name(),
+			ThumbnailURL: "/api/recordings/" + entry.Name() + "/thumbnail",
+			DownloadURL:  "/recordings/" + entry.Name() + "?download=1",
 		})
 	}
 	sort.Slice(recordings, func(i, j int) bool {
+		if recordings[i].StartedAt.Equal(recordings[j].StartedAt) {
+			return recordings[i].ID < recordings[j].ID
+		}
 		return recordings[i].StartedAt.After(recordings[j].StartedAt)
 	})
 	return recordings, nil
@@ -70,10 +77,17 @@ func (s *Store) Open(id string) (*os.File, fs.FileInfo, error) {
 	}
 	path := filepath.Join(s.directory, id)
 	linkInfo, err := os.Lstat(path)
-	if err != nil || linkInfo.Mode()&os.ModeSymlink != 0 {
+	if err != nil || !linkInfo.Mode().IsRegular() {
 		return nil, nil, fs.ErrNotExist
 	}
-	file, err := os.Open(path)
+	// Root.Open prevents an outside-directory escape even if a symlink replaces
+	// the checked entry between Lstat and Open.
+	root, err := os.OpenRoot(s.directory)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer root.Close()
+	file, err := root.Open(id)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -86,6 +100,41 @@ func (s *Store) Open(id string) (*os.File, fs.FileInfo, error) {
 		return nil, nil, fs.ErrNotExist
 	}
 	return file, info, nil
+}
+
+type Query struct {
+	From, To      time.Time // Inclusive from, exclusive to; zero means unbounded.
+	Offset, Limit int
+}
+
+type Page struct {
+	Recordings []Recording `json:"recordings"`
+	Total      int         `json:"total"`
+	HasMore    bool        `json:"hasMore"`
+}
+
+func (s *Store) Search(query Query) (Page, error) {
+	items, err := s.List()
+	if err != nil {
+		return Page{}, err
+	}
+	filtered := make([]Recording, 0)
+	for _, item := range items {
+		if !query.From.IsZero() && item.StartedAt.Before(query.From) {
+			continue
+		}
+		if !query.To.IsZero() && !item.StartedAt.Before(query.To) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	limit := query.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	start := min(max(query.Offset, 0), len(filtered))
+	end := start + min(limit, len(filtered)-start)
+	return Page{Recordings: filtered[start:end], Total: len(filtered), HasMore: end < len(filtered)}, nil
 }
 
 func recordingTime(name string, fallback fs.FileInfo) time.Time {

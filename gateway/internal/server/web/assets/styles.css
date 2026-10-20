@@ -9,6 +9,7 @@
 body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 70% 0%, #24312b 0, #0b0e0c 38rem); }
 button, input { font: inherit; }
 button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .4; }
 .shell { width: min(100%, 74rem); margin: 0 auto; padding: max(1.25rem, env(safe-area-inset-top)) 1rem 3rem; }
 .topbar, .section-heading, .status-row, .recording-summary { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 h1, h2, p { margin-top: 0; }
@@ -46,6 +47,20 @@ form button { width: 100%; margin-top: 1rem; }
 .recording-card { overflow: hidden; border: 1px solid #ffffff15; border-radius: .8rem; background: #121713; }
 .recording-summary { width: 100%; color: #eef3ef; background: transparent; text-align: left; }
 .recording-size { color: #91a096; font-size: .85rem; font-weight: 500; }
+.recording-filter { display: flex; align-items: flex-end; flex-wrap: wrap; gap: .75rem; }
+.recording-filter label { margin: 0 0 .4rem; }
+.recording-filter button { width: auto; margin-top: 0; }
+.recording-filter > div { flex: 1 1 10rem; }
+.archive-hint { color: #91a096; font-size: .8rem; line-height: 1.5; }
+#recording-timezone { margin: .65rem 0 1rem; }
+.recording-preview { position: relative; flex: 0 0 10rem; aspect-ratio: 16 / 9; overflow: hidden; border-radius: .4rem; background: #080b09; }
+.recording-thumbnail { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
+.thumbnail-placeholder { display: flex; align-items: center; justify-content: center; height: 100%; padding: .5rem; color: #91a096; font-size: .75rem; text-align: center; }
+.recording-description { display: grid; gap: .4rem; flex: 1; }
+.recording-actions { display: flex; justify-content: flex-end; padding: 0 1rem .75rem; }
+.recording-download { display: inline-flex; align-items: center; padding: .5rem .75rem; border-radius: .5rem; text-decoration: none; font-size: .85rem; }
+.recording-download:focus-visible, button:focus-visible { outline: 2px solid #83e2ad; outline-offset: 3px; }
+.recording-pages { display: flex; align-items: center; justify-content: center; gap: 1rem; margin-top: 1rem; font-size: .85rem; }
 .recording-card video { display: block; width: 100%; background: #000; }
 .recording-card video[hidden] { display: none; }
 .empty { padding: 3rem 1rem; color: #8f9992; text-align: center; }
@@ -56,4 +71,6 @@ form button { width: 100%; margin-top: 1rem; }
   .topbar { align-items: flex-end; }
   .tabs { position: sticky; top: env(safe-area-inset-top); z-index: 5; }
   .status-row { align-items: flex-start; }
+  .recording-preview { flex-basis: 6rem; }
+  .recording-date { font-size: .85rem; }
 }

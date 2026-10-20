@@ -1,7 +1,8 @@
 (() => {
   "use strict";
 
-  const state = { csrfToken: "", liveLoaded: false, view: "live", mediaReachable: null, statusCheck: 0, recordingsCheck: 0 };
+  const state = { csrfToken: "", liveLoaded: false, view: "live", mediaReachable: null, statusCheck: 0, recordingsCheck: 0,
+    recordingOffset: 0, recordingLimit: 50, recordingRange: {}, recordingsLoading: false, recordingHasMore: false };
   const loginPanel = document.querySelector("#login-panel");
   const app = document.querySelector("#app");
   const connection = document.querySelector("#connection");
@@ -15,6 +16,12 @@
   const recordingsContainer = document.querySelector("#recordings");
   const recordingsEmpty = document.querySelector("#recordings-empty");
   const recordingTemplate = document.querySelector("#recording-template");
+  const recordingFrom = document.querySelector("#recording-from");
+  const recordingTo = document.querySelector("#recording-to");
+  const recordingResults = document.querySelector("#recording-results");
+  const previousRecordings = document.querySelector("#previous-recordings");
+  const nextRecordings = document.querySelector("#next-recordings");
+  document.querySelector("#recording-timezone").textContent = `날짜·시각 기준: 접속 기기 (${Intl.DateTimeFormat().resolvedOptions().timeZone}). 녹화 시작 시각으로 검색합니다.`;
 
   async function request(url, options = {}) {
     const headers = new Headers(options.headers || {});
@@ -51,12 +58,15 @@
     stopLive();
     liveUnavailable.hidden = true;
     renderHealth(null);
-    for (const video of recordingsContainer.querySelectorAll("video")) {
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
-    }
-    recordingsContainer.replaceChildren();
+    clearRecordings();
+    recordingFrom.value = "";
+    recordingTo.value = "";
+    state.recordingOffset = 0;
+    state.recordingRange = {};
+    state.recordingHasMore = false;
+    state.recordingsLoading = false;
+    recordingResults.textContent = "";
+    updateRecordingPages();
     app.hidden = true;
     loginPanel.hidden = false;
     connection.textContent = "로그인 필요";
@@ -81,6 +91,8 @@
     if (view === "recordings") {
       stopLive();
       refreshRecordings();
+    } else {
+      for (const video of recordingsContainer.querySelectorAll("video")) video.pause();
     }
   }
 
@@ -149,13 +161,20 @@
     const session = state.csrfToken;
     if (!session) return;
     const check = ++state.recordingsCheck;
-    recordingsContainer.replaceChildren();
-    recordingsEmpty.textContent = "저장된 움직임 녹화가 없습니다.";
+    clearRecordings();
+    state.recordingsLoading = true;
+    updateRecordingPages();
+    recordingResults.textContent = "녹화 검색 중…";
+    recordingsEmpty.textContent = "조건에 맞는 녹화가 없습니다.";
     recordingsEmpty.hidden = true;
     try {
-      const result = await request("/api/recordings");
+      const params = new URLSearchParams({ ...state.recordingRange, offset: state.recordingOffset, limit: state.recordingLimit });
+      const result = await request(`/api/recordings?${params}`);
       if (state.csrfToken !== session || check !== state.recordingsCheck) return;
       recordingsEmpty.hidden = result.recordings.length !== 0;
+      state.recordingHasMore = result.hasMore;
+      const start = result.recordings.length ? state.recordingOffset + 1 : 0;
+      recordingResults.textContent = `총 ${result.total}개 · ${start}–${start ? state.recordingOffset + result.recordings.length : 0} 표시`;
       for (const recording of result.recordings) {
         const card = recordingTemplate.content.firstElementChild.cloneNode(true);
         card.querySelector(".recording-date").textContent = new Intl.DateTimeFormat("ko-KR", {
@@ -163,14 +182,26 @@
         }).format(new Date(recording.startedAt));
         card.querySelector(".recording-size").textContent = formatBytes(recording.sizeBytes);
         const video = card.querySelector("video");
+        const download = card.querySelector(".recording-download");
+        download.href = recording.downloadURL;
+        download.download = recording.id;
+        const image = card.querySelector(".recording-thumbnail");
+        const placeholder = card.querySelector(".thumbnail-placeholder");
+        image.addEventListener("load", () => { placeholder.hidden = true; });
+        image.addEventListener("error", () => {
+          image.hidden = true;
+          placeholder.hidden = false;
+          placeholder.textContent = "미리보기 없음 · 재생 가능";
+        });
+        image.src = recording.thumbnailURL;
         card.querySelector(".recording-summary").addEventListener("click", () => {
           const opening = video.hidden;
           for (const other of recordingsContainer.querySelectorAll("video")) {
-            if (other !== video) { other.pause(); other.hidden = true; other.removeAttribute("src"); }
+            if (other !== video) { other.pause(); other.hidden = true; other.removeAttribute("src"); other.load(); }
           }
           video.hidden = !opening;
           if (opening) video.src = recording.url;
-          else { video.pause(); video.removeAttribute("src"); }
+          else { video.pause(); video.removeAttribute("src"); video.load(); }
         });
         video.hidden = true;
         recordingsContainer.append(card);
@@ -179,8 +210,66 @@
       if (state.csrfToken !== session || check !== state.recordingsCheck) return;
       recordingsEmpty.textContent = error.message;
       recordingsEmpty.hidden = false;
+      recordingResults.textContent = "녹화 목록을 불러오지 못했습니다. 새로고침해 주세요.";
+      state.recordingHasMore = false;
+    } finally {
+      if (state.csrfToken === session && check === state.recordingsCheck) {
+        state.recordingsLoading = false;
+        updateRecordingPages();
+      }
     }
   }
+
+  function clearRecordings() {
+    for (const video of recordingsContainer.querySelectorAll("video")) {
+      video.pause(); video.removeAttribute("src"); video.load();
+    }
+    for (const image of recordingsContainer.querySelectorAll("img")) image.removeAttribute("src");
+    recordingsContainer.replaceChildren();
+  }
+
+  function updateRecordingPages() {
+    previousRecordings.disabled = state.recordingsLoading || state.recordingOffset === 0;
+    nextRecordings.disabled = state.recordingsLoading || !state.recordingHasMore;
+    document.querySelector("#recording-page").textContent = `${Math.floor(state.recordingOffset / state.recordingLimit) + 1} 페이지`;
+  }
+
+  function dateBoundary(value, nextDay) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error("날짜를 확인해 주세요.");
+    const date = new Date(`${value}T00:00:00`);
+    const [year, month, day] = value.split("-").map(Number);
+    if (!Number.isFinite(date.getTime()) || date.getFullYear() !== year || date.getMonth() + 1 !== month || date.getDate() !== day) throw new Error("날짜를 확인해 주세요.");
+    if (nextDay) date.setDate(date.getDate() + 1); // Local calendar days, including DST.
+    return date.toISOString();
+  }
+
+  document.querySelector("#recording-filter").addEventListener("submit", (event) => {
+    event.preventDefault();
+    try {
+      if (recordingFrom.value && recordingTo.value && recordingFrom.value > recordingTo.value) throw new Error("시작 날짜가 끝 날짜보다 늦습니다.");
+      const range = {};
+      if (recordingFrom.value) range.from = dateBoundary(recordingFrom.value, false);
+      if (recordingTo.value) range.to = dateBoundary(recordingTo.value, true);
+      state.recordingRange = range;
+      state.recordingOffset = 0;
+      refreshRecordings();
+    } catch (error) { recordingResults.textContent = error.message; }
+  });
+  document.querySelector("#clear-recording-filter").addEventListener("click", () => {
+    recordingFrom.value = ""; recordingTo.value = "";
+    state.recordingRange = {}; state.recordingOffset = 0;
+    refreshRecordings();
+  });
+  previousRecordings.addEventListener("click", () => {
+    if (previousRecordings.disabled) return;
+    state.recordingOffset = Math.max(0, state.recordingOffset - state.recordingLimit);
+    refreshRecordings();
+  });
+  nextRecordings.addEventListener("click", () => {
+    if (nextRecordings.disabled) return;
+    state.recordingOffset += state.recordingLimit;
+    refreshRecordings();
+  });
 
   function formatBytes(bytes) {
     if (bytes < 1024) return `${bytes} B`;
@@ -206,7 +295,7 @@
     try { await request("/api/logout", { method: "POST" }); } finally { showLogin(); }
   });
   document.querySelector("#reload-live").addEventListener("click", () => { stopLive(); refreshStatus(); });
-  document.querySelector("#refresh-recordings").addEventListener("click", refreshRecordings);
+  document.querySelector("#refresh-recordings").addEventListener("click", () => { state.recordingOffset = 0; refreshRecordings(); });
 
   for (const tab of document.querySelectorAll(".tab")) {
     tab.addEventListener("click", () => {

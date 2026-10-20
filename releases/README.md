@@ -1,6 +1,6 @@
 # Mac 테스트 ZIP 다운로드
 
-최신 로컬 구현은 **2026-10-20 기능 1·2 추가본**입니다. 같은 날짜가 여러 개면 파일 이름의 시각이 가장 늦은 ZIP을 받으세요. [기능 1 안내](../docs/FEATURE_1_ARCHIVE_ACCESS.md), [기능 2 상태판·프레임 정지 복구](../docs/FEATURE_2_MONITORING_HEALTH.md), [이전 재점검 기록](../docs/RECHECK_2026-10-20.md)을 참고하세요. GitHub 업로드는 Git 인증 갱신이 필요하며 현재 로컬 커밋/ZIP과 원격 저장소 내용이 다를 수 있습니다.
+최신 로컬 구현은 **2026-10-20 기능 1·2·3 추가본**입니다. 같은 날짜가 여러 개면 파일 이름의 시각이 가장 늦은 ZIP을 받으세요. [기능 1 안내](../docs/FEATURE_1_ARCHIVE_ACCESS.md), [기능 2 상태판·프레임 정지 복구](../docs/FEATURE_2_MONITORING_HEALTH.md), [기능 3 날짜 검색·썸네일·다운로드](../docs/FEATURE_3_RECORDING_BROWSER.md), [이전 재점검 기록](../docs/RECHECK_2026-10-20.md)을 참고하세요. GitHub 업로드는 Git 인증 갱신이 필요하며 현재 로컬 커밋/ZIP과 원격 저장소 내용이 다를 수 있습니다.
 
 이 폴더의 날짜가 가장 최신인 `MacMonitor-Mac-Test-*.zip`을 클릭하고 GitHub의 **Download raw file** 버튼으로 받으세요. GitHub Releases 탭이 아니라 저장소 안의 `releases` 폴더입니다.
 
