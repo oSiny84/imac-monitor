@@ -96,7 +96,9 @@ func recordingTime(name string, fallback fs.FileInfo) time.Time {
 			if separator := strings.IndexByte(value, '-'); separator > 0 {
 				value = value[:separator]
 			}
-			if parsed, err := time.Parse("20060102T150405", value); err == nil {
+			// FFmpeg strftime and the Swift event merger name files in the Mac's
+			// local time zone. Parsing as UTC shifts the browser's displayed time.
+			if parsed, err := time.ParseInLocation("20060102T150405", value, time.Local); err == nil {
 				return parsed
 			}
 		}

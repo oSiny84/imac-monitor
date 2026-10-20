@@ -1,6 +1,9 @@
 MacMonitor — Mac에서 처음 테스트하기
 ====================================
 
+2026-10-20 재점검 수정본입니다. 이전 ZIP 대신 새 폴더에 압축 해제해서 사용하세요.
+변경·검사 기록: docs/RECHECK_2026-10-20.md
+
 1. 무엇을 옮기나요?
 GitHub 저장소의 releases 폴더에서 최신 MacMonitor-Mac-Test-날짜-시간.zip을
 클릭한 뒤 Download raw file 버튼으로 받습니다.

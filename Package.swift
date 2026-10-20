@@ -18,7 +18,8 @@ let package = Package(
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("CoreMedia"),
                 .linkedFramework("CoreVideo"),
-                .linkedFramework("IOKit")
+                .linkedFramework("IOKit"),
+                .linkedFramework("Security")
             ]
         ),
         .executableTarget(

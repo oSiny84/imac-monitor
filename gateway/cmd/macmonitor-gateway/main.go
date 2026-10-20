@@ -3,11 +3,13 @@ package main
 import (
 	"bufio"
 	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -31,6 +33,8 @@ func main() {
 		hashPassword(os.Args[2:])
 	case "init":
 		initialize(os.Args[2:])
+	case "check-config":
+		checkConfig(os.Args[2:])
 	default:
 		usage()
 	}
@@ -124,6 +128,66 @@ func initialize(arguments []string) {
 	fmt.Printf("Wrote %s\n", *output)
 }
 
+func checkConfig(arguments []string) {
+	flags := flag.NewFlagSet("check-config", flag.ExitOnError)
+	configPath := flags.String("config", "", "path to gateway JSON configuration")
+	_ = flags.Parse(arguments)
+	if *configPath == "" {
+		flags.Usage()
+		os.Exit(2)
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		log.Fatalf("configuration error: %v", err)
+	}
+	pair, err := tls.LoadX509KeyPair(cfg.TLSCertificateFile, cfg.TLSPrivateKeyFile)
+	if err != nil {
+		log.Fatalf("TLS certificate/key error: %v", err)
+	}
+	if len(pair.Certificate) == 0 {
+		log.Fatal("TLS certificate/key error: certificate chain is empty")
+	}
+	certificate, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		log.Fatalf("TLS certificate error: %v", err)
+	}
+	now := time.Now()
+	if now.Before(certificate.NotBefore) {
+		log.Fatalf("TLS certificate is not valid before %s", certificate.NotBefore.Format(time.RFC3339))
+	}
+	if !now.Before(certificate.NotAfter) {
+		log.Fatalf("TLS certificate expired at %s", certificate.NotAfter.Format(time.RFC3339))
+	}
+	origin, err := url.Parse(cfg.PublicOrigin)
+	if err != nil {
+		log.Fatalf("public origin error: %v", err)
+	}
+	if err := certificate.VerifyHostname(origin.Hostname()); err != nil {
+		log.Fatalf("TLS certificate does not match %s: %v", origin.Hostname(), err)
+	}
+	privateKeyInfo, err := os.Stat(cfg.TLSPrivateKeyFile)
+	if err != nil {
+		log.Fatalf("private key error: %v", err)
+	}
+	if privateKeyInfo.Mode().Perm()&0o077 != 0 {
+		log.Fatalf("private key permissions must deny group/other access; found %04o", privateKeyInfo.Mode().Perm())
+	}
+	recordingsInfo, err := os.Stat(cfg.RecordingsDirectory)
+	if err != nil {
+		log.Fatalf("recordings directory error: %v", err)
+	}
+	if !recordingsInfo.IsDir() {
+		log.Fatal("recordingsDirectory is not a directory")
+	}
+
+	fmt.Printf("gateway configuration: OK\n")
+	fmt.Printf("public origin: %s\n", cfg.PublicOrigin)
+	fmt.Printf("listen address: %s\n", cfg.ListenAddress)
+	fmt.Printf("certificate expires: %s\n", certificate.NotAfter.Format(time.RFC3339))
+	fmt.Printf("recordings directory: %s\n", cfg.RecordingsDirectory)
+}
+
 func readPassword(prompt string) string {
 	hidden := setTerminalEcho(false) == nil
 	if hidden {
@@ -155,6 +219,6 @@ func setTerminalEcho(enabled bool) error {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: macmonitor-gateway <serve|hash-password|init> [options]")
+	fmt.Fprintln(os.Stderr, "usage: macmonitor-gateway <serve|hash-password|init|check-config> [options]")
 	os.Exit(2)
 }

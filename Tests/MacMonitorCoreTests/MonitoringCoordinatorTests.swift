@@ -3,6 +3,80 @@ import XCTest
 @testable import MacMonitorCore
 
 final class MonitoringCoordinatorTests: XCTestCase {
+    func testObsoleteStartCompletionDoesNotStopReplacementRun() {
+        let camera = DeferredCameraStub(deferStarts: true, deferStops: false)
+        let sleepPreventer = SleepPreventerStub()
+        let pipeline = PipelineStub()
+        let coordinator = MonitoringCoordinator(camera: camera,
+            idleSleepPreventer: sleepPreventer, pipeline: pipeline)
+        let firstStart = expectation(description: "first start pending")
+        let replacementStart = expectation(description: "replacement start pending")
+        let stopped = expectation(description: "first run stopped")
+        let running = expectation(description: "replacement running")
+        camera.onStart = { count in
+            if count == 1 { firstStart.fulfill() }
+            if count == 2 { replacementStart.fulfill() }
+        }
+        coordinator.onStateChange = { state in
+            if case .running = state { running.fulfill() }
+        }
+
+        coordinator.start()
+        wait(for: [firstStart], timeout: 1)
+        coordinator.stop { stopped.fulfill() }
+        wait(for: [stopped], timeout: 1)
+        coordinator.start()
+        wait(for: [replacementStart], timeout: 1)
+        camera.completeStart(at: 1)
+        wait(for: [running], timeout: 1)
+
+        // The old asynchronous callback is allowed to arrive after the new run is live.
+        camera.completeStart(at: 0)
+        let drained = expectation(description: "obsolete callback processed")
+        coordinator.stop { drained.fulfill() }
+        wait(for: [drained], timeout: 1)
+        XCTAssertEqual(camera.stopCount, 2, "only the two requested stops should stop the camera")
+        XCTAssertEqual(pipeline.stopCount, 2)
+        XCTAssertEqual(sleepPreventer.releaseCount, 2)
+    }
+
+    func testRepeatedStopsShareOneCleanupAndWaitForItToFinish() {
+        let camera = DeferredCameraStub(deferStarts: false, deferStops: true)
+        let sleepPreventer = SleepPreventerStub()
+        let pipeline = PipelineStub()
+        let coordinator = MonitoringCoordinator(camera: camera,
+            idleSleepPreventer: sleepPreventer, pipeline: pipeline)
+        let firstRunning = expectation(description: "first run")
+        let replacementRunning = expectation(description: "replacement run")
+        let stopPending = expectation(description: "one camera stop pending")
+        let newerStopFinished = expectation(description: "newer stop finished")
+        let olderStopFinished = expectation(description: "older stop finished")
+        var runningCount = 0
+        coordinator.onStateChange = { state in
+            if case .running = state {
+                runningCount += 1
+                if runningCount == 1 { firstRunning.fulfill() }
+                if runningCount == 2 { replacementRunning.fulfill() }
+            }
+        }
+        camera.onStop = { stopPending.fulfill() }
+
+        coordinator.start()
+        wait(for: [firstRunning], timeout: 1)
+        coordinator.stop { olderStopFinished.fulfill() }
+        coordinator.stop { newerStopFinished.fulfill() }
+        wait(for: [stopPending], timeout: 1)
+        camera.completeStop(at: 0)
+        wait(for: [newerStopFinished, olderStopFinished], timeout: 1)
+        coordinator.start()
+        wait(for: [replacementRunning], timeout: 1)
+
+        XCTAssertEqual(camera.stopCount, 1)
+        XCTAssertEqual(pipeline.stopCount, 1, "both requests must share the same completed cleanup")
+        XCTAssertEqual(sleepPreventer.releaseCount, 1)
+        XCTAssertEqual(camera.startCount, 2)
+    }
+
     func testSuccessfulStartAcquiresAssertionAndPublishesRunningState() throws {
         let camera = CameraStub()
         let sleepPreventer = SleepPreventerStub()
@@ -371,6 +445,46 @@ private final class CameraStub: CameraCapturing {
         stopCount += 1
         completion()
     }
+}
+
+private final class DeferredCameraStub: CameraCapturing {
+    var failureHandler: ((Error) -> Void)?
+    var onStart: ((Int) -> Void)?
+    var onStop: (() -> Void)?
+    private let deferStarts: Bool
+    private let deferStops: Bool
+    private var pendingStarts: [(Result<CaptureRuntimeInfo, Error>) -> Void] = []
+    private var pendingStops: [() -> Void] = []
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+
+    init(deferStarts: Bool, deferStops: Bool) {
+        self.deferStarts = deferStarts
+        self.deferStops = deferStops
+    }
+
+    func requestAuthorization(completion: @escaping (Bool) -> Void) { completion(true) }
+
+    func start(completion: @escaping (Result<CaptureRuntimeInfo, Error>) -> Void) {
+        startCount += 1
+        pendingStarts.append(completion)
+        onStart?(startCount)
+        if !deferStarts { completeStart(at: pendingStarts.count - 1) }
+    }
+
+    func stop(completion: @escaping () -> Void) {
+        stopCount += 1
+        pendingStops.append(completion)
+        onStop?()
+        if !deferStops { completion() }
+    }
+
+    func completeStart(at index: Int) {
+        pendingStarts[index](.success(CaptureRuntimeInfo(deviceName: "Test Camera",
+            logURL: URL(fileURLWithPath: "/tmp/test.jsonl"))))
+    }
+
+    func completeStop(at index: Int) { pendingStops[index]() }
 }
 
 private final class SleepPreventerStub: IdleSleepPreventing {

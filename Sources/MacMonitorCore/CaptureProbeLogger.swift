@@ -116,7 +116,9 @@ final class CaptureProbeLogger {
     private func writeUnlocked(_ event: Event) {
         guard var data = try? encoder.encode(event) else { return }
         data.append(0x0A)
-        fileHandle.write(data)
+        // The legacy write(_:) raises an Objective-C exception on an I/O failure (for
+        // example a disk filling up). Diagnostic logging must not crash monitoring.
+        try? fileHandle.write(contentsOf: data)
         try? fileHandle.synchronize()
     }
 

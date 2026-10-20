@@ -7,11 +7,49 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"macmonitor.local/gateway/internal/auth"
 	"macmonitor.local/gateway/internal/config"
 )
+
+func TestRootPageAndEmbeddedAssets(t *testing.T) {
+	server, err := New(config.Config{
+		MediaMTXURL:         "http://127.0.0.1:8889",
+		RecordingsDirectory: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := server.Handler()
+	for _, test := range []struct {
+		path        string
+		contentType string
+		contains    string
+	}{
+		{"/", "text/html", "id=\"login-form\""},
+		{"/assets/app.js", "javascript", "showAuthenticated"},
+		{"/assets/styles.css", "text/css", ".video-frame"},
+	} {
+		t.Run(test.path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
+			if response.Code != http.StatusOK {
+				t.Fatalf("returned %d; Location=%q", response.Code, response.Header().Get("Location"))
+			}
+			if !strings.Contains(response.Header().Get("Content-Type"), test.contentType) ||
+				!strings.Contains(response.Body.String(), test.contains) {
+				t.Fatalf("unexpected page response: type=%q body=%q", response.Header().Get("Content-Type"), response.Body.String())
+			}
+		})
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/unknown", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("unknown endpoint returned %d", response.Code)
+	}
+}
 
 func TestAuthenticationAndProtectedRecordingRange(t *testing.T) {
 	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -46,10 +84,24 @@ func TestAuthenticationAndProtectedRecordingRange(t *testing.T) {
 	}
 	handler := server.Handler()
 
-	unauthorized := httptest.NewRecorder()
-	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/recordings", nil))
-	if unauthorized.Code != http.StatusUnauthorized {
-		t.Fatalf("protected endpoint returned %d", unauthorized.Code)
+	for _, protected := range []struct{ method, path string }{
+		{http.MethodGet, "/api/status"},
+		{http.MethodGet, "/api/recordings"},
+		{http.MethodGet, "/recordings/" + name},
+		{http.MethodHead, "/recordings/" + name},
+		{http.MethodGet, "/live/live/"},
+		{http.MethodPost, "/live/live/whep"},
+		{http.MethodPatch, "/live/live/whep/session-id"},
+		{http.MethodDelete, "/live/live/whep/session-id"},
+		{http.MethodOptions, "/live/live/whep"},
+	} {
+		request := httptest.NewRequest(protected.method, protected.path, nil)
+		request.Header.Set("Origin", cfg.PublicOrigin)
+		unauthorized := httptest.NewRecorder()
+		handler.ServeHTTP(unauthorized, request)
+		if unauthorized.Code != http.StatusUnauthorized {
+			t.Fatalf("protected %s %s returned %d", protected.method, protected.path, unauthorized.Code)
+		}
 	}
 
 	loginBody, _ := json.Marshal(map[string]string{"password": "correct horse battery staple"})
@@ -86,6 +138,14 @@ func TestAuthenticationAndProtectedRecordingRange(t *testing.T) {
 	}
 	if err := json.Unmarshal(login.Body.Bytes(), &loginResult); err != nil || loginResult.CSRFToken == "" {
 		t.Fatalf("missing CSRF token: %v", err)
+	}
+	withoutCSRF := httptest.NewRequest(http.MethodPost, "/api/logout", nil)
+	withoutCSRF.AddCookie(cookies[0])
+	withoutCSRF.Header.Set("Origin", cfg.PublicOrigin)
+	withoutCSRFResponse := httptest.NewRecorder()
+	handler.ServeHTTP(withoutCSRFResponse, withoutCSRF)
+	if withoutCSRFResponse.Code != http.StatusForbidden {
+		t.Fatalf("logout without CSRF token returned %d", withoutCSRFResponse.Code)
 	}
 	logoutRequest := httptest.NewRequest(http.MethodPost, "/api/logout", nil)
 	logoutRequest.AddCookie(cookies[0])

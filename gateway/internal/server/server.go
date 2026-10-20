@@ -108,7 +108,7 @@ func New(cfg config.Config) (*Server, error) {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", s.serveIndex)
+	mux.HandleFunc("GET /{$}", s.serveIndex)
 	mux.Handle("GET /assets/", s.static)
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("GET /api/session", s.sessionStatus)
@@ -125,7 +125,6 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) serveIndex(writer http.ResponseWriter, request *http.Request) {
-	request.URL.Path = "/index.html"
 	s.static.ServeHTTP(writer, request)
 }
 

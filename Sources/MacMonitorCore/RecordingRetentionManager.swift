@@ -82,7 +82,11 @@ public final class RecordingRetentionManager {
             guard let self else { return }
             let start = timestamp.addingTimeInterval(-self.policy.preRoll)
             let end = timestamp.addingTimeInterval(self.policy.postRoll)
-            if var latest = self.motionWindows.last, start <= latest.end {
+            // Two disjoint windows can still need the same five-second segment. Treat
+            // nearby windows as one event; otherwise merging the first event consumes
+            // the shared segment before the second event can include its pre-roll.
+            if var latest = self.motionWindows.last,
+               start <= latest.end.addingTimeInterval(self.policy.segmentDuration) {
                 latest.end = max(latest.end, end)
                 latest.start = min(latest.start, start)
                 self.motionWindows[self.motionWindows.count - 1] = latest
@@ -221,6 +225,11 @@ public final class RecordingRetentionManager {
     }
 
     private func availableBytes() -> Int64 {
+        if let values = try? recordingsDirectory.resourceValues(
+            forKeys: [.volumeAvailableCapacityForImportantUsageKey]
+        ), let capacity = values.volumeAvailableCapacityForImportantUsage {
+            return capacity
+        }
         guard let attributes = try? FileManager.default.attributesOfFileSystem(forPath: recordingsDirectory.path),
               let value = attributes[.systemFreeSize] as? NSNumber else { return Int64.max }
         return value.int64Value

@@ -1,5 +1,7 @@
 # Mac 테스트 ZIP 다운로드
 
+최신 재점검본은 **2026-10-20**입니다. 이전 2026-10-10 ZIP 대신 새 날짜 파일을 받으세요. 다운로드 검증·웹 첫 화면·녹화·감시 복구 수정과 테스트 기록은 [재점검 문서](../docs/RECHECK_2026-10-20.md)에 있습니다.
+
 이 폴더의 날짜가 가장 최신인 `MacMonitor-Mac-Test-*.zip`을 클릭하고 GitHub의 **Download raw file** 버튼으로 받으세요. GitHub Releases 탭이 아니라 저장소 안의 `releases` 폴더입니다.
 
 1. Mac에서 ZIP을 풀고 `MacMonitor` 폴더를 통째로 유지합니다.

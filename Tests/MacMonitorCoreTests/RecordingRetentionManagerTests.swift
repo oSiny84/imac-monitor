@@ -2,6 +2,77 @@ import XCTest
 @testable import MacMonitorCore
 
 final class RecordingRetentionManagerTests: XCTestCase {
+    func testNearbyMotionWindowsDoNotConsumeEachOthersSharedSegment() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let spool = root.appendingPathComponent("spool")
+        let recordings = root.appendingPathComponent("recordings")
+        try FileManager.default.createDirectory(at: spool, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: recordings, withIntermediateDirectories: true)
+        let merger = MergerStub()
+        let manager = RecordingRetentionManager(spoolDirectory: spool, recordingsDirectory: recordings,
+            policy: RetentionPolicy(maximumAge: 86400, maximumBytes: 1_000_000, minimumFreeBytes: 0),
+            eventMerger: merger)
+        let base = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
+        let names = stride(from: -5, through: 35, by: 5).map {
+            "segment-\(timestamp(base.addingTimeInterval(Double($0)))).mp4"
+        }
+        for name in names { try Data(name.utf8).write(to: spool.appendingPathComponent(name)) }
+
+        // Windows [-3,17] and [19,39] are disjoint, but both need segment [15,20].
+        // Merging them independently used to remove that segment from the second event.
+        manager.recordMotion(at: base.addingTimeInterval(2))
+        manager.recordMotion(at: base.addingTimeInterval(24))
+        manager.runMaintenance(now: base.addingTimeInterval(60))
+
+        XCTAssertEqual(merger.mergeCallCount, 1)
+        XCTAssertEqual(merger.receivedSegmentNames, names)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: spool.path), [])
+    }
+
+    func testMinutePreRollAndHalfMinutePostRollExcludeQuietFootage() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let spool = root.appendingPathComponent("spool")
+        let recordings = root.appendingPathComponent("recordings")
+        try FileManager.default.createDirectory(at: spool, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: recordings, withIntermediateDirectories: true)
+        let manager = RecordingRetentionManager(spoolDirectory: spool, recordingsDirectory: recordings,
+            policy: RetentionPolicy(maximumAge: 86400, maximumBytes: 1_000_000, minimumFreeBytes: 0,
+                preRoll: 60, postRoll: 30))
+        let base = Date(timeIntervalSince1970: 1_791_417_600)
+        let offsets = [-70, -65, -60, -30, 0, 25, 30, 60]
+        for offset in offsets {
+            let name = "segment-\(timestamp(base.addingTimeInterval(Double(offset)))).mp4"
+            try Data("segment".utf8).write(to: spool.appendingPathComponent(name))
+        }
+        manager.recordMotion(at: base)
+        manager.runMaintenance(now: base.addingTimeInterval(150))
+        let names = try FileManager.default.contentsOfDirectory(atPath: recordings.path).sorted()
+        let expected = [-60, -30, 0, 25].map {
+            "segment-\(timestamp(base.addingTimeInterval(Double($0)))).mp4"
+        }.sorted()
+        XCTAssertEqual(names, expected)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: spool.path), [])
+    }
+
+    func testNoMotionProducesNoSavedRecording() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let spool = root.appendingPathComponent("spool")
+        let recordings = root.appendingPathComponent("recordings")
+        try FileManager.default.createDirectory(at: spool, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: recordings, withIntermediateDirectories: true)
+        let manager = RecordingRetentionManager(spoolDirectory: spool, recordingsDirectory: recordings,
+            policy: RetentionPolicy(maximumAge: 86400, maximumBytes: 1_000_000, minimumFreeBytes: 0, preRoll: 60, postRoll: 60))
+        let now = Date()
+        let name = "segment-\(timestamp(now.addingTimeInterval(-120))).mp4"
+        try Data("quiet".utf8).write(to: spool.appendingPathComponent(name))
+        manager.runMaintenance(now: now)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: recordings.path), [])
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: spool.path), [])
+    }
+
     func testFinalizationKeepsOnlySegmentsAroundMotion() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

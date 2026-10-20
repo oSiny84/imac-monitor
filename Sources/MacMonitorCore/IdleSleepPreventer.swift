@@ -17,8 +17,11 @@ public enum IdleSleepPreventerError: LocalizedError {
 public final class IdleSleepPreventer: IdleSleepPreventing {
     private let lock = NSLock()
     private var assertionID: IOPMAssertionID?
+    private let reason: String
 
-    public init() {}
+    public init(reason: String = "MacMonitor가 감시 중입니다. 디스플레이 절전은 계속 허용됩니다.") {
+        self.reason = reason
+    }
 
     public func acquire() throws {
         lock.lock()
@@ -30,7 +33,7 @@ public final class IdleSleepPreventer: IdleSleepPreventing {
         let result = IOPMAssertionCreateWithName(
             kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
             IOPMAssertionLevel(kIOPMAssertionLevelOn),
-            "MacMonitor가 감시 중입니다. 디스플레이 절전은 계속 허용됩니다." as CFString,
+            reason as CFString,
             &newAssertionID
         )
 

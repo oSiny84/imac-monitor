@@ -8,6 +8,7 @@ public enum CameraCaptureError: LocalizedError {
     case selectedCameraUnavailable
     case cannotAddInput
     case cannotAddOutput
+    case unsupportedVideoFormat
     case logInitializationFailed(Error)
     case runtimeFailure
 
@@ -21,6 +22,8 @@ public enum CameraCaptureError: LocalizedError {
             return "카메라 입력을 캡처 세션에 연결할 수 없습니다."
         case .cannotAddOutput:
             return "영상 출력을 캡처 세션에 연결할 수 없습니다."
+        case .unsupportedVideoFormat:
+            return "선택한 카메라는 필요한 1280×720 영상 형식을 지원하지 않습니다. 다른 카메라를 선택해 주세요."
         case let .logInitializationFailed(error):
             return "진단 로그를 열 수 없습니다: \(error.localizedDescription)"
         case .runtimeFailure:
@@ -116,6 +119,7 @@ public final class CameraCaptureService: NSObject, CameraCapturing {
                 logger.recordStarted(deviceName: deviceName)
                 self.setActive(true)
                 self.session.startRunning()
+                guard self.session.isRunning else { throw CameraCaptureError.runtimeFailure }
 
                 completion(
                     .success(
@@ -192,10 +196,13 @@ public final class CameraCaptureService: NSObject, CameraCapturing {
         }
 
         session.beginConfiguration()
-        if session.canSetSessionPreset(.hd1280x720) {
-            session.sessionPreset = .hd1280x720
-        }
         session.addInput(input)
+        guard session.canSetSessionPreset(.hd1280x720) else {
+            session.removeInput(input)
+            session.commitConfiguration()
+            throw CameraCaptureError.unsupportedVideoFormat
+        }
+        session.sessionPreset = .hd1280x720
         session.addOutput(output)
         session.commitConfiguration()
 

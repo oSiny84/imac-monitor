@@ -10,6 +10,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let stopMenuItem = NSMenuItem(title: "감시 중지", action: #selector(stopMonitoring), keyEquivalent: "x")
     private var readyToTerminate = false
     private var settingsWindowController: SettingsWindowController?
+    private var authenticated = false
+    private var terminating = false
+    private var monitoringWanted = false
+    private var monitoringRequested = false
+    private var stoppingForPower = false
+    private var systemSleeping = false
+    private var sleepStartedAt: Date?
+    private var schedule = DailySleepSchedule()
+    private var wasRestTime: Bool?
+    private var scheduleTimer: Timer?
+    private let displaySleep = DisplaySleepController()
+    // Separate from the coordinator: stopping capture must not release this assertion.
+    private let displayOnlySleepPreventer = IdleSleepPreventer(reason: "MacMonitor 화면만 끄기 예약: 시스템은 깨어 있고 화면 절전은 허용됩니다.")
+    private var reportedPowerError = false
 
     override init() {
         let pipeline = LocalMonitoringPipeline()
@@ -31,6 +45,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        guard AppPasswordPrompt.unlock() else {
+            readyToTerminate = true
+            NSApp.terminate(nil)
+            return
+        }
+        authenticated = true
 
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "video", accessibilityDescription: "MacMonitor")
@@ -78,13 +98,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.render(state)
         }
         render(.idle)
-        if LaunchAtLoginManager.isEnabled {
-            coordinator.start()
+        let center = NSWorkspace.shared.notificationCenter
+        center.addObserver(self, selector: #selector(willSleep), name: NSWorkspace.willSleepNotification, object: nil)
+        center.addObserver(self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(settingsChanged), name: .monitoringSettingsChanged, object: nil)
+        do {
+            schedule = try AppConfiguration.loadOrCreate().sleepSchedule
+        } catch {
+            AppPasswordPrompt.showError(error.localizedDescription)
         }
+        monitoringWanted = LaunchAtLoginManager.isEnabled || schedule.enabled
+        let timer = Timer(timeInterval: 10, repeats: true) { [weak self] _ in self?.evaluateSchedule() }
+        RunLoop.main.add(timer, forMode: .common)
+        RunLoop.main.add(timer, forMode: .modalPanel)
+        scheduleTimer = timer
+        evaluateSchedule()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !readyToTerminate else { return .terminateNow }
+        terminating = true
+        scheduleTimer?.invalidate()
+        displaySleep.cancel()
+        displayOnlySleepPreventer.release()
         coordinator.stop { [weak self] in
             self?.readyToTerminate = true
             NSApp.reply(toApplicationShouldTerminate: true)
@@ -93,20 +129,113 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func startMonitoring() {
-        coordinator.start()
+        guard authenticated else { return }
+        monitoringWanted = true
+        // Also allows an explicit retry after the coordinator exhausted recovery attempts.
+        monitoringRequested = false
+        evaluateSchedule()
     }
 
     @objc private func stopMonitoring() {
-        coordinator.stop()
+        monitoringWanted = false
+        reconcileMonitoring()
+    }
+
+    @objc private func settingsChanged() {
+        do {
+            let next = try AppConfiguration.loadOrCreate().sleepSchedule
+            if next != schedule {
+                displaySleep.cancel()
+                schedule = next
+                wasRestTime = nil
+                if schedule.enabled { monitoringWanted = true }
+            }
+            evaluateSchedule()
+        } catch { AppPasswordPrompt.showError(error.localizedDescription) }
+    }
+
+    @objc private func willSleep() {
+        displaySleep.cancel()
+        sleepStartedAt = Date()
+        systemSleeping = true
+        reconcileMonitoring()
+    }
+
+    @objc private func didWake() {
+        guard authenticated, !terminating else { return }
+        systemSleeping = false
+        let now = Date()
+        if let start = sleepStartedAt, schedule.crossesResumeTime(from: start, to: now) {
+            monitoringWanted = true
+        }
+        sleepStartedAt = nil
+        evaluateSchedule()
+        if schedule.isNearScheduledWake(at: Date()) ||
+            (schedule.enabled && schedule.mode == .displayOnly && schedule.isRestTime(at: Date())) {
+            displaySleep.turnOffOnce(respectExistingInput: true)
+        }
+    }
+
+    private func evaluateSchedule() {
+        guard authenticated, !terminating else { return }
+        if schedule.enabled && schedule.mode == .displayOnly {
+            do {
+                try displayOnlySleepPreventer.acquire()
+                reportedPowerError = false
+            } catch {
+                if !reportedPowerError {
+                    NSLog("MacMonitor: display-only idle sleep prevention failed: %@", error.localizedDescription)
+                    reportedPowerError = true
+                }
+            }
+        } else {
+            displayOnlySleepPreventer.release()
+            reportedPowerError = false
+        }
+        let resting = schedule.isRestTime(at: Date(), preparationMinutes: schedule.preparationMinutes)
+        if resting && wasRestTime != true && schedule.mode == .displayOnly && !systemSleeping {
+            displaySleep.turnOffOnce()
+        } else if !resting && wasRestTime == true && schedule.mode == .displayOnly {
+            displaySleep.cancel()
+        }
+        if wasRestTime == true && !resting && schedule.enabled {
+            monitoringWanted = true
+        }
+        wasRestTime = resting
+        reconcileMonitoring()
+    }
+
+    private func reconcileMonitoring() {
+        guard authenticated, !terminating else { return }
+        let shouldRun = monitoringWanted && !systemSleeping &&
+            !schedule.isRestTime(at: Date(), preparationMinutes: schedule.preparationMinutes)
+        if shouldRun {
+            guard !stoppingForPower, !monitoringRequested else { return }
+            monitoringRequested = true
+            coordinator.start()
+        } else if monitoringRequested && !stoppingForPower {
+            stoppingForPower = true
+            coordinator.stop { [weak self] in
+                guard let self else { return }
+                self.monitoringRequested = false
+                self.stoppingForPower = false
+                self.reconcileMonitoring()
+            }
+        }
+        if schedule.enabled && schedule.isRestTime(at: Date(), preparationMinutes: schedule.preparationMinutes) {
+            statusMenuItem.title = "예약 휴식 중 — \(DailySleepSchedule.timeString(schedule.wakeMinute)) 감시 재개"
+        }
     }
 
     @objc private func openDiagnostics() {
+        guard authenticated else { return }
         let directory = CameraCaptureService.diagnosticsDirectoryURL
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         NSWorkspace.shared.open(directory)
     }
 
     @objc private func openSettings() {
+        guard authenticated else { return }
         let controller = settingsWindowController ?? SettingsWindowController()
         settingsWindowController = controller
         controller.showWindow(nil)
@@ -141,5 +270,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             stopMenuItem.isEnabled = state != .stopping
         }
         statusItem.button?.toolTip = state.displayText
+        if schedule.enabled && schedule.isRestTime(at: Date(), preparationMinutes: schedule.preparationMinutes) {
+            statusMenuItem.title = "예약 휴식 중 — \(DailySleepSchedule.timeString(schedule.wakeMinute)) 감시 재개"
+        }
     }
 }

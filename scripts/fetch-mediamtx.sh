@@ -14,7 +14,9 @@ curl --fail --location --proto '=https' --tlsv1.2 \
 curl --fail --location --proto '=https' --tlsv1.2 \
     "$RELEASE_URL/checksums.sha256" --output "$TEMP_DIR/checksums.sha256"
 
-EXPECTED="$(awk -v file="$ARCHIVE" '$2 == file { print $1 }' "$TEMP_DIR/checksums.sha256")"
+# Upstream generates this file with `sha256sum -b`: the filename is prefixed
+# with '*'. Accept both the binary and text forms of the checksum list.
+EXPECTED="$(awk -v file="$ARCHIVE" '{ name = $2; sub(/^\*/, "", name); if (name == file) print $1 }' "$TEMP_DIR/checksums.sha256")"
 ACTUAL="$(shasum -a 256 "$TEMP_DIR/$ARCHIVE" | awk '{ print $1 }')"
 if [[ -z "$EXPECTED" || "$EXPECTED" != "$ACTUAL" ]]; then
     echo "MediaMTX checksum verification failed" >&2

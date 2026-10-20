@@ -135,16 +135,52 @@
 
 pacer 테스트는 프레임 경계의 부동소수점 반올림에 의존하지 않도록 폴링 시각을 경계에서 1ms 비켜 두었다.
 
-## 손대지 않은 기존 지적 사항
+## 후속 보강 — 파이프라인 동시성과 APFS 여유 공간
+
+이어받은 작업에서 아래 두 항목을 추가로 수정했다. 이 변경도 Windows에서 작성했으므로 대상 Mac의
+`swift test`와 Thread Sanitizer 검증 전에는 통과로 간주하지 않는다.
+
+- `LocalMonitoringPipeline.consume`은 이제 상태 잠금을 유지한 동안 detector·retention·encoder를
+  사용한다. `stop`은 같은 잠금 아래에서 참조를 스냅샷한 뒤 저장 프로퍼티를 먼저 비우고, 잠금 밖에서
+  각 컴포넌트를 종료한다. 시작 도중 중지된 경우에는 이미 기동한 helper를 정리하고 시작 취소 오류를
+  반환한다. FFmpeg 프레임 복사가 끝난 뒤에도 `acceptingFrames`를 다시 확인해 중지 후 프레임이
+  `latestFrame`에 되살아나는 경로를 막았다. FFmpeg 종료 핸들러는 자신이 시작한 프로세스와 세마포어만
+  갱신하도록 바꿔 늦게 끝난 이전 프로세스가 새 실행 상태를 덮지 못하게 했다. 중지 시 stdin을 먼저
+  닫고 정상 종료, `SIGTERM`, `SIGKILL` 순으로 제한 시간 내 정리하므로 막힌 파이프 쓰기가 중지를
+  무기한 붙잡지 않는다.
+- 디스크 여유 공간은 APFS의 purgeable 공간을 반영하는
+  `volumeAvailableCapacityForImportantUsage`를 우선 사용하고, 값을 얻지 못할 때만 기존
+  `.systemFreeSize`로 되돌아간다.
+- 디스크 공간, 시스템 uptime, 앱 소유 파일 메타데이터 API의 사용 이유를 선언하는
+  `Resources/PrivacyInfo.xcprivacy`를 추가하고 앱 번들 빌드 시 복사한다.
+- 수동 검토에만 쓰인 루트의 `fake/`, `hb.jsonl`, `g1.sh` 산출물은 제거했다.
+
+권장 추가 검증:
+
+```bash
+swift test
+swift test --sanitize=thread
+```
+
+## 추가 검토 수정 — 녹화 실패 감지·빌드 검사·설정 보존
+
+- FFmpeg의 MP4 출력에 `onfail=abort`를 적용했다. 녹화 출력이 실패하면 FFmpeg가 종료되어
+  기존 프로세스 종료 감지와 제한된 자동 복구로 전달된다. RTSP 출력의 `onfail=ignore`는 유지한다.
+  디스크 오류가 지속되면 복구 예산 소진 후 실패 상태로 전환한다. 오류 발생 구간의 영상은 복구할 수 없다.
+- 빌드/진단의 `grep -q`를 전체 입력을 소비하는 검사로 바꿨다. `pipefail`이 활성화된 상태에서
+  검색 조기 종료로 출력 프로세스가 SIGPIPE를 받아 정상 FFmpeg를 실패로 오판하는 경로를 제거했다.
+- 게이트웨이 설정은 같은 디렉터리의 임시 파일에서 생성·검증하고 성공한 경우에만 이름을 바꿔
+  기존 설정을 교체한다. 생성·TLS 검증 실패 시 기존 설정을 유지하고 임시 파일을 제거한다.
+- `bash scripts/test-script-regressions.sh`로 설정 실패/성공과 긴 인코더 출력, 인코더 누락,
+  명령 실패를 모의 helper로 검증했다. 이 회귀 검사는 앱 빌드에도 포함된다.
+  실제 인증서와 VideoToolbox, 녹화 출력 실패 후 복구 동작은 대상 Mac에서 추가 검증해야 한다.
+
+## 남아 있는 기존 지적 사항
 
 검토에서 함께 보고했으나 수정하지 않았다. 판단은 이어받는 쪽에 맡긴다.
 
-- `LocalMonitoringPipeline.consume`이 `started`만 잠금으로 읽고 `detector`/`encoder`/`retention`은
-  잠금 밖에서 접근한다. 옵셔널이라 nil 역참조는 안전하지만 Swift 클래스 참조의 교차 스레드 접근은
-  원자성이 보장되지 않는다.
-- `RecordingRetentionManager`의 디스크 여유 공간 계산이 `.systemFreeSize`를 쓴다. APFS에서는
-  `volumeAvailableCapacityForImportantUsage`가 더 정확하다.
 - 게이트웨이 `WriteTimeout: 0`은 스트리밍과 Range 재생을 위한 의도된 설정이지만 쓰기측
   slow-loris에 노출된다. 개인용 범위에서는 수용 가능하다.
 - MediaMTX 설정 키(`moq`, `rtspTransports`, `webrtcLocalUDPAddress`)는 버전에 민감하다.
-  1.21.1 기동 테스트로 고정 확인이 필요하다.
+  앱이 생성하는 전체 설정은 Windows용 1.21.1의 `--validate-conf`를 통과했다. 실제 Monterey용
+  바이너리 기동과 WebRTC 송수신은 여전히 Mac에서 검증해야 한다.

@@ -22,7 +22,10 @@
     const response = await fetch(url, { ...options, headers, credentials: "same-origin" });
     const type = response.headers.get("Content-Type") || "";
     const body = type.includes("application/json") ? await response.json() : null;
-    if (!response.ok) throw new Error(body?.error || `요청 실패 (${response.status})`);
+    if (!response.ok) {
+      if (response.status === 401 && state.csrfToken) showLogin();
+      throw new Error(body?.error || `요청 실패 (${response.status})`);
+    }
     return body;
   }
 
@@ -40,6 +43,12 @@
     state.csrfToken = "";
     state.liveLoaded = false;
     livePlayer.removeAttribute("src");
+    for (const video of recordingsContainer.querySelectorAll("video")) {
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    }
+    recordingsContainer.replaceChildren();
     app.hidden = true;
     loginPanel.hidden = false;
     connection.textContent = "로그인 필요";
@@ -64,6 +73,7 @@
 
   async function refreshRecordings() {
     recordingsContainer.replaceChildren();
+    recordingsEmpty.textContent = "저장된 움직임 녹화가 없습니다.";
     recordingsEmpty.hidden = true;
     try {
       const result = await request("/api/recordings");

@@ -9,6 +9,9 @@ public struct AppConfiguration: Codable, Equatable {
     public var retentionDays: Int
     public var retentionMaxGigabytes: Double
     public var minimumFreeGigabytes: Double
+    public var preRollSeconds: Int
+    public var postRollSeconds: Int
+    public var sleepSchedule: DailySleepSchedule
 
     public init(
         cameraUniqueID: String? = nil,
@@ -18,7 +21,10 @@ public struct AppConfiguration: Codable, Equatable {
         motionChangedFraction: Double = 0.025,
         retentionDays: Int = 14,
         retentionMaxGigabytes: Double = 20,
-        minimumFreeGigabytes: Double = 5
+        minimumFreeGigabytes: Double = 5,
+        preRollSeconds: Int = 30,
+        postRollSeconds: Int = 30,
+        sleepSchedule: DailySleepSchedule = DailySleepSchedule()
     ) {
         self.cameraUniqueID = cameraUniqueID
         self.externalWebRTCHosts = externalWebRTCHosts
@@ -28,6 +34,32 @@ public struct AppConfiguration: Codable, Equatable {
         self.retentionDays = retentionDays
         self.retentionMaxGigabytes = retentionMaxGigabytes
         self.minimumFreeGigabytes = minimumFreeGigabytes
+        self.preRollSeconds = preRollSeconds
+        self.postRollSeconds = postRollSeconds
+        self.sleepSchedule = sleepSchedule
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case cameraUniqueID, externalWebRTCHosts, videoBitrateKbps
+        case motionPixelThreshold, motionChangedFraction, retentionDays
+        case retentionMaxGigabytes, minimumFreeGigabytes
+        case preRollSeconds, postRollSeconds, sleepSchedule
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        cameraUniqueID = try values.decodeIfPresent(String.self, forKey: .cameraUniqueID)
+        externalWebRTCHosts = try values.decode([String].self, forKey: .externalWebRTCHosts)
+        videoBitrateKbps = try values.decode(Int.self, forKey: .videoBitrateKbps)
+        motionPixelThreshold = try values.decode(Double.self, forKey: .motionPixelThreshold)
+        motionChangedFraction = try values.decode(Double.self, forKey: .motionChangedFraction)
+        retentionDays = try values.decode(Int.self, forKey: .retentionDays)
+        retentionMaxGigabytes = try values.decode(Double.self, forKey: .retentionMaxGigabytes)
+        minimumFreeGigabytes = try values.decode(Double.self, forKey: .minimumFreeGigabytes)
+        // Preserve the previous behavior when upgrading an existing installation.
+        preRollSeconds = try values.decodeIfPresent(Int.self, forKey: .preRollSeconds) ?? 5
+        postRollSeconds = try values.decodeIfPresent(Int.self, forKey: .postRollSeconds) ?? 15
+        sleepSchedule = try values.decodeIfPresent(DailySleepSchedule.self, forKey: .sleepSchedule) ?? DailySleepSchedule()
     }
 
     public static func loadOrCreate() throws -> AppConfiguration {
@@ -58,6 +90,10 @@ public struct AppConfiguration: Codable, Equatable {
     }
 
     public func validate() throws {
+        guard (0...300).contains(preRollSeconds), (5...300).contains(postRollSeconds) else {
+            throw AppConfigurationError.invalid("움직임 전 0~300초 / 후 5~300초")
+        }
+        try sleepSchedule.validate()
         guard (250...10_000).contains(videoBitrateKbps) else {
             throw AppConfigurationError.invalid("videoBitrateKbps")
         }

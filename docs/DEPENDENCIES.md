@@ -12,6 +12,8 @@
 | 영상 엔진 | MediaMTX 1.21.1, darwin/amd64 | 버전 고정 | 공식 archive/checksum 설치 스크립트 작성. 동일 버전 Windows 바이너리로 최소 설정 기동 확인, Monterey 실행 대기 |
 | HTTPS 게이트웨이 | Go 1.26.x, 표준 라이브러리만 사용 | 고정 | Go 1.27부터 macOS 13 이상이므로 Monterey 빌드는 1.26으로 제한. Windows 테스트와 darwin/amd64 교차 빌드 통과 |
 
+`scripts/build-app.sh`는 위 고정을 빌드 전에 강제하고 검증을 마친 임시 앱 번들만 결과 경로로 승격한다. `scripts/diagnose.sh`는 설치된 FFmpeg의 VideoToolbox 실제 인코딩, 번들 아키텍처·서명, MediaMTX 1.21.1과 런타임 설정, 선택적 HTTPS 게이트웨이 TLS 구성을 실행 전에 검사한다.
+
 ## MediaMTX 채택 게이트
 
 다음 조건을 대상 아이맥에서 모두 확인한 뒤 `통합 후보`를 `채택`으로 변경합니다.

@@ -1,5 +1,6 @@
 import CoreMedia
 import CoreVideo
+import Darwin
 import Foundation
 
 public struct FFmpegPipelineConfiguration {
@@ -72,22 +73,32 @@ public final class FFmpegPipeline {
 
         let logHandle = try FileHandle(forWritingTo: configuration.logURL)
         logHandle.seekToEndOfFile()
-        let inputPipe = Pipe()
+        let inputPipe: Pipe
+        do {
+            inputPipe = try Self.makeInputPipe()
+        } catch {
+            try? logHandle.close()
+            throw error
+        }
         let process = Process()
         process.executableURL = configuration.executableURL
         process.arguments = arguments()
         process.standardInput = inputPipe
         process.standardOutput = logHandle
         process.standardError = logHandle
-        terminationSignal = DispatchSemaphore(value: 0)
+        let terminationSignal = DispatchSemaphore(value: 0)
+        self.terminationSignal = terminationSignal
         process.terminationHandler = { [weak self] terminatedProcess in
             guard let self else { return }
             self.stateLock.lock()
-            let wasUnexpected = self.acceptingFrames
-            self.acceptingFrames = false
+            let ownsProcess = self.process.map { $0 === terminatedProcess } ?? false
+            let wasUnexpected = ownsProcess && self.acceptingFrames
+            if ownsProcess {
+                self.acceptingFrames = false
+            }
             let failureHandler = self.failureHandler
             self.stateLock.unlock()
-            self.terminationSignal.signal()
+            terminationSignal.signal()
             if wasUnexpected {
                 failureHandler?(FFmpegPipelineError.unexpectedExit(terminatedProcess.terminationStatus))
             }
@@ -118,6 +129,16 @@ public final class FFmpegPipeline {
         }
 
         startPacing()
+    }
+
+    /// Make a broken encoder pipe report EPIPE instead of terminating the app
+    /// with SIGPIPE. The write error can then reach coordinated recovery.
+    static func makeInputPipe() throws -> Pipe {
+        let pipe = Pipe()
+        guard fcntl(pipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else {
+            throw FFmpegPipelineError.inputWriteFailed(NSError(domain: NSPOSIXErrorDomain, code: Int(errno)))
+        }
+        return pipe
     }
 
     /// Writes to the FFmpeg pipe on the clock rather than on frame arrival, so that the
@@ -174,7 +195,9 @@ public final class FFmpegPipeline {
         // thread free of the blocking write, and a frame that arrives late is repeated by the
         // pacer rather than shortening the encoded timeline.
         stateLock.lock()
-        latestFrame = frame
+        if acceptingFrames {
+            latestFrame = frame
+        }
         stateLock.unlock()
     }
 
@@ -184,26 +207,29 @@ public final class FFmpegPipeline {
         let pacingTimer = self.pacingTimer
         self.pacingTimer = nil
         latestFrame = nil
-        stateLock.unlock()
-        pacingTimer?.cancel()
-        writerQueue.sync {}
-
-        stateLock.lock()
         let process = self.process
         let inputHandle = self.inputHandle
+        let terminationSignal = self.terminationSignal
+        let logHandle = self.logHandle
         self.inputHandle = nil
         self.process = nil
+        self.logHandle = nil
         stateLock.unlock()
 
+        pacingTimer?.cancel()
+        // Closing stdin first gives FFmpeg EOF and also releases a writer blocked on the pipe.
         try? inputHandle?.close()
         if let process, process.isRunning {
             if terminationSignal.wait(timeout: .now() + 5) == .timedOut {
                 process.terminate()
-                _ = terminationSignal.wait(timeout: .now() + 2)
+                if terminationSignal.wait(timeout: .now() + 2) == .timedOut, process.isRunning {
+                    kill(process.processIdentifier, SIGKILL)
+                    _ = terminationSignal.wait(timeout: .now() + 1)
+                }
             }
         }
+        writerQueue.sync {}
         try? logHandle?.close()
-        logHandle = nil
     }
 
     private func reportWriteFailure(_ error: Error) {
@@ -222,8 +248,12 @@ public final class FFmpegPipeline {
             .appendingPathComponent("segment-%Y%m%dT%H%M%S.mp4")
             .path
         let teeTarget = [
-            "[f=rtsp:rtsp_transport=tcp:onfail=ignore]\(configuration.rtspPublishURL.absoluteString)",
-            "[f=segment:segment_time=\(configuration.segmentSeconds):segment_time_delta=0.033:reset_timestamps=1:strftime=1:segment_format=mp4:segment_format_options=movflags=+faststart:onfail=ignore]\(segmentPattern)"
+            // A local publish failure must restart the pipeline; silently dropping
+            // this slave would leave monitoring 'running' without any live video.
+            "[f=rtsp:rtsp_transport=tcp:onfail=abort]\(configuration.rtspPublishURL.absoluteString)",
+            // Recording is essential: surface a failed output through process termination
+            // so MonitoringCoordinator can recover instead of silently losing recordings.
+            "[f=segment:segment_time=\(configuration.segmentSeconds):segment_time_delta=0.033:reset_timestamps=1:strftime=1:segment_format=mp4:segment_format_options=movflags=+faststart:onfail=abort]\(segmentPattern)"
         ].joined(separator: "|")
 
         return [

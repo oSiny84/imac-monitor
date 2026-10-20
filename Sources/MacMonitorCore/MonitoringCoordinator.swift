@@ -14,6 +14,8 @@ public final class MonitoringCoordinator {
     private var recoveryAttempt = 0
     private var recoveryWorkItem: DispatchWorkItem?
     private var recoveryBudgetResetWorkItem: DispatchWorkItem?
+    private var explicitStopInProgress = false
+    private var stopCompletions: [() -> Void] = []
 
     public init(
         camera: CameraCapturing,
@@ -65,12 +67,19 @@ public final class MonitoringCoordinator {
             self.recoveryWorkItem?.cancel()
             self.recoveryWorkItem = nil
             self.cancelRecoveryBudgetReset()
+            if self.explicitStopInProgress {
+                if let completion { self.stopCompletions.append(completion) }
+                return
+            }
             self.generation &+= 1
+            let stopGeneration = self.generation
             if self.state == .idle {
                 DispatchQueue.main.async { completion?() }
                 return
             }
 
+            self.explicitStopInProgress = true
+            if let completion { self.stopCompletions.append(completion) }
             self.transition(to: .stopping)
             self.camera.stop { [weak self] in
                 self?.queue.async {
@@ -78,10 +87,15 @@ public final class MonitoringCoordinator {
                         DispatchQueue.main.async { completion?() }
                         return
                     }
+                    guard self.explicitStopInProgress,
+                          self.generation == stopGeneration else { return }
                     self.pipeline?.stop()
                     self.idleSleepPreventer.release()
+                    self.explicitStopInProgress = false
                     self.transition(to: .idle)
-                    DispatchQueue.main.async { completion?() }
+                    let completions = self.stopCompletions
+                    self.stopCompletions.removeAll()
+                    DispatchQueue.main.async { completions.forEach { $0() } }
                 }
             }
         }
@@ -121,12 +135,10 @@ public final class MonitoringCoordinator {
         camera.start { [weak self] result in
             self?.queue.async {
                 guard let self else { return }
-                guard generation == self.generation else {
-                    self.camera.stop {}
-                    self.pipeline?.stop()
-                    self.idleSleepPreventer.release()
-                    return
-                }
+                // A stop or a runtime-failure cleanup owns obsolete generations. An old
+                // camera callback can arrive after the replacement run starts, so cleaning
+                // up here would stop the replacement camera/pipeline as well.
+                guard generation == self.generation else { return }
 
                 switch result {
                 case let .success(info):

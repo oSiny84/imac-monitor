@@ -4,6 +4,7 @@
 /.tools/
 /.gocache/
 /.gotmp/
+/.cache/
 /vendor/mediamtx/
 *.xcuserstate
 .DS_Store
