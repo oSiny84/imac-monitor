@@ -11,8 +11,14 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
     private var encoder: FFmpegPipeline?
     private var starting = false
     private var started = false
+    private let healthReporter: MonitoringHealthReporter?
 
-    public init() {}
+    public init(healthReporter: MonitoringHealthReporter? = nil) {
+        self.healthReporter = healthReporter
+        healthReporter?.onStall = { [weak self] in
+            self?.reportFailure(CaptureFrameStallError())
+        }
+    }
 
     public func start() throws {
         stateLock.lock()
@@ -39,6 +45,7 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
             logURL: AppDirectories.diagnostics.appendingPathComponent("mediamtx.log"),
             additionalHosts: configuration.externalWebRTCHosts
         )
+        let reporter = healthReporter
         let retention = RecordingRetentionManager(
             spoolDirectory: AppDirectories.spool,
             recordingsDirectory: AppDirectories.recordings,
@@ -49,7 +56,9 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
                 preRoll: TimeInterval(configuration.preRollSeconds),
                 postRoll: TimeInterval(configuration.postRollSeconds)
             ),
-            eventMerger: FFmpegRecordingEventMerger(executableURL: ffmpegURL)
+            eventMerger: FFmpegRecordingEventMerger(executableURL: ffmpegURL, onCompleted: { [weak reporter] url in
+                reporter?.recordRecording(at: url)
+            })
         )
         let encoder = FFmpegPipeline(
             configuration: FFmpegPipelineConfiguration(
@@ -112,6 +121,7 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
         }
         if let observation = detector.analyze(sampleBuffer: sampleBuffer), observation.isMotion {
             retention.recordMotion(at: observation.timestamp)
+            healthReporter?.recordMotion(at: observation.timestamp)
         }
         encoder.consume(sampleBuffer: sampleBuffer)
         stateLock.unlock()
@@ -151,6 +161,10 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
     }
 
     deinit { stop() }
+}
+
+private struct CaptureFrameStallError: LocalizedError {
+    var errorDescription: String? { "카메라에서 새 프레임이 들어오지 않아 감시를 다시 시작합니다." }
 }
 
 public enum LocalMonitoringPipelineError: LocalizedError {

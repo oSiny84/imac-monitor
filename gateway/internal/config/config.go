@@ -14,15 +14,16 @@ import (
 )
 
 type Config struct {
-	ListenAddress       string `json:"listenAddress"`
-	TLSCertificateFile  string `json:"tlsCertificateFile"`
-	TLSPrivateKeyFile   string `json:"tlsPrivateKeyFile"`
-	PublicOrigin        string `json:"publicOrigin"`
-	MediaMTXURL         string `json:"mediaMTXURL"`
-	RecordingsDirectory string `json:"recordingsDirectory"`
-	PasswordHash        string `json:"passwordHash"`
-	SessionIdleMinutes  int    `json:"sessionIdleMinutes"`
-	SessionMaxHours     int    `json:"sessionMaxHours"`
+	ListenAddress        string `json:"listenAddress"`
+	TLSCertificateFile   string `json:"tlsCertificateFile"`
+	TLSPrivateKeyFile    string `json:"tlsPrivateKeyFile"`
+	PublicOrigin         string `json:"publicOrigin"`
+	MediaMTXURL          string `json:"mediaMTXURL"`
+	RecordingsDirectory  string `json:"recordingsDirectory"`
+	MonitoringStatusFile string `json:"monitoringStatusFile,omitempty"`
+	PasswordHash         string `json:"passwordHash"`
+	SessionIdleMinutes   int    `json:"sessionIdleMinutes"`
+	SessionMaxHours      int    `json:"sessionMaxHours"`
 }
 
 func Load(path string) (Config, error) {
@@ -45,6 +46,13 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.SessionMaxHours == 0 {
 		cfg.SessionMaxHours = 24
+	}
+	if cfg.MonitoringStatusFile == "" {
+		directory, err := filepath.Abs(filepath.Dir(path))
+		if err != nil {
+			return Config{}, fmt.Errorf("resolve config directory: %w", err)
+		}
+		cfg.MonitoringStatusFile = filepath.Join(directory, "Runtime", "monitoring-status.json")
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -70,6 +78,9 @@ func (c Config) Validate() error {
 	}
 	if c.RecordingsDirectory == "" || !filepath.IsAbs(c.RecordingsDirectory) {
 		return errors.New("recordingsDirectory must be an absolute path")
+	}
+	if c.MonitoringStatusFile != "" && !filepath.IsAbs(c.MonitoringStatusFile) {
+		return errors.New("monitoringStatusFile must be an absolute path")
 	}
 	if !strings.HasPrefix(c.PasswordHash, "pbkdf2_sha256$") {
 		return errors.New("passwordHash is required")

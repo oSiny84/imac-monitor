@@ -4,6 +4,7 @@ import MacMonitorCore
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let pipeline: LocalMonitoringPipeline
     private let coordinator: MonitoringCoordinator
+    private let healthReporter: MonitoringHealthReporter
     private let archiveAccess = ArchiveAccessController()
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let statusMenuItem = NSMenuItem(title: "감시 중지됨", action: nil, keyEquivalent: "")
@@ -28,14 +29,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var reportedPowerError = false
 
     override init() {
-        let pipeline = LocalMonitoringPipeline()
+        let healthReporter = MonitoringHealthReporter()
+        self.healthReporter = healthReporter
+        let pipeline = LocalMonitoringPipeline(healthReporter: healthReporter)
         self.pipeline = pipeline
         coordinator = MonitoringCoordinator(
             camera: CameraCaptureService(
                 deviceUniqueIDProvider: {
                     (try? AppConfiguration.loadOrCreate())?.cameraUniqueID
                 },
-                frameHandler: { [weak pipeline] sampleBuffer in
+                frameHandler: { [weak pipeline, weak healthReporter] sampleBuffer in
+                    healthReporter?.recordFrame()
                     pipeline?.consume(sampleBuffer: sampleBuffer)
                 }
             ),
@@ -53,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         authenticated = true
+        healthReporter.start()
 
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "video", accessibilityDescription: "MacMonitor")
@@ -131,9 +136,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scheduleTimer?.invalidate()
         displaySleep.cancel()
         displayOnlySleepPreventer.release()
+        healthReporter.setPauseReason(.manualStop)
         let stopped = DispatchGroup()
         stopped.enter()
-        coordinator.stop { stopped.leave() }
+        coordinator.stop { [healthReporter = self.healthReporter] in healthReporter.stop { stopped.leave() } }
         stopped.enter()
         archiveAccess.stop { stopped.leave() }
         stopped.notify(queue: .main) { [weak self] in
@@ -226,8 +232,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func reconcileMonitoring() {
         guard authenticated, !terminating else { return }
+        let resting = schedule.isRestTime(at: Date(), preparationMinutes: schedule.preparationMinutes)
+        healthReporter.setPauseReason(systemSleeping ? .systemSleep : resting ? .scheduledRest : monitoringWanted ? nil : .manualStop)
         let shouldRun = monitoringWanted && !systemSleeping &&
-            !schedule.isRestTime(at: Date(), preparationMinutes: schedule.preparationMinutes)
+            !resting
         if shouldRun {
             guard !stoppingForPower, !monitoringRequested else { return }
             monitoringRequested = true
@@ -282,6 +290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func render(_ state: MonitoringState) {
+        healthReporter.updateState(state)
         statusMenuItem.title = state.displayText
 
         switch state {

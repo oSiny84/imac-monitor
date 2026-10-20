@@ -38,6 +38,19 @@
 
       <p id="live-unavailable" class="archive-notice" role="status" hidden>실시간 영상을 사용할 수 없습니다. 녹화 탭에서 저장된 영상을 볼 수 있습니다.</p>
 
+      <section class="monitoring-panel" aria-label="실제 감시 상태">
+        <p id="monitor-state" class="status-dot" role="status">감시 상태 확인 중</p>
+        <p id="monitor-detail" class="monitor-detail"></p>
+        <dl class="monitoring-grid">
+          <div><dt>실제 수신 FPS</dt><dd id="capture-fps">—</dd></div>
+          <div><dt>마지막 프레임</dt><dd id="last-frame">—</dd></div>
+          <div><dt>마지막 움직임</dt><dd id="last-motion">—</dd></div>
+          <div><dt>최근 녹화 완성</dt><dd id="last-recording">—</dd></div>
+          <div><dt>디스크 여유</dt><dd id="disk-free">—</dd></div>
+          <div><dt>프레임 정지 감지</dt><dd id="watchdog-count">—</dd></div>
+        </dl>
+      </section>
+
       <section id="live-view" class="view">
         <div class="video-frame">
           <iframe id="live-player" title="실시간 카메라" allow="autoplay; fullscreen" referrerpolicy="no-referrer"></iframe>

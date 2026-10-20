@@ -19,6 +19,7 @@ import (
 
 	"macmonitor.local/gateway/internal/auth"
 	"macmonitor.local/gateway/internal/config"
+	"macmonitor.local/gateway/internal/health"
 	"macmonitor.local/gateway/internal/recordings"
 )
 
@@ -212,6 +213,7 @@ func (s *Server) status(writer http.ResponseWriter, request *http.Request) {
 		"gateway":        "ok",
 		"mediaReachable": mediaReachable,
 		"checkedAt":      time.Now().UTC(),
+		"monitoring":     health.Read(s.config.MonitoringStatusFile, time.Now()),
 	})
 }
 

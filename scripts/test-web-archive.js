@@ -32,7 +32,8 @@ async function flush() { await new Promise(setImmediate); }
 async function fixture(mediaOnline) {
   const ids = ["login-panel", "app", "connection", "login-form", "login-error", "live-player",
     "live-unavailable", "media-status", "recordings", "recordings-empty", "recording-template",
-    "logout", "reload-live", "refresh-recordings", "live-view", "recordings-view"];
+    "logout", "reload-live", "refresh-recordings", "live-view", "recordings-view", "monitor-state", "monitor-detail",
+    "capture-fps", "last-frame", "last-motion", "last-recording", "disk-free", "watchdog-count"];
   const elements = Object.fromEntries(ids.map((id) => [id, new Element()]));
   elements["recording-template"].content = { firstElementChild: { cloneNode() {
     const card = new Element();
@@ -49,7 +50,7 @@ async function fixture(mediaOnline) {
     querySelectorAll: () => tabs,
     addEventListener() {},
   };
-  const api = { mediaOnline, blocked: false, release: null, interval: null };
+  const api = { mediaOnline, blocked: false, release: null, interval: null, monitoring: null };
   const response = (body) => ({ ok: true, headers: { get: () => "application/json" }, json: async () => body });
   const fetch = async (url) => {
     if (url === "/api/session") return response({ authenticated: true, csrfToken: "session-one" });
@@ -58,8 +59,8 @@ async function fixture(mediaOnline) {
       { startedAt: "2026-10-20T03:00:00Z", sizeBytes: 1024, url: "/recordings/example.mp4" },
     ] });
     if (url === "/api/status") {
-      if (api.blocked) return new Promise((resolve) => { api.release = () => resolve(response({ mediaReachable: api.mediaOnline })); });
-      return response({ mediaReachable: api.mediaOnline });
+      if (api.blocked) return new Promise((resolve) => { api.release = () => resolve(response({ mediaReachable: api.mediaOnline, monitoring: api.monitoring })); });
+      return response({ mediaReachable: api.mediaOnline, monitoring: api.monitoring });
     }
     throw new Error(`unexpected request ${url}`);
   };
@@ -123,4 +124,32 @@ test("a status response arriving after logout cannot restart live video", async 
   assert.equal(elements.app.hidden, true);
   assert.equal(elements["login-panel"].hidden, false);
   assert.equal(elements["live-player"].src, undefined);
+});
+
+test("health distinguishes real frames, planned rest, stalls and stale app data", async () => {
+  const { elements, api, tick } = await fixture(true);
+  assert.equal(elements["monitor-state"].textContent, "상태 확인 불가");
+  api.monitoring = { available: true, fresh: true, state: "running", frameState: "receiving", expectingFrames: true,
+    detail: "감시 중", captureFPS: 14.9, lastFrameAt: "2026-10-20T05:00:00Z", diskFreeBytes: 1073741824,
+    watchdogRecoveries: 0 };
+  await tick();
+  assert.equal(elements["monitor-state"].textContent, "새 프레임 수신 중");
+  assert.equal(elements["capture-fps"].textContent, "14.9 fps");
+  assert.equal(elements["disk-free"].textContent, "1.0 GB");
+  assert.notEqual(elements["last-frame"].textContent, "—");
+  api.monitoring.state = "scheduledRest";
+  api.monitoring.frameState = "inactive";
+  api.monitoring.expectingFrames = false;
+  await tick();
+  assert.equal(elements["monitor-state"].textContent, "예약 휴식 중");
+  assert.equal(elements["capture-fps"].textContent, "—");
+  api.monitoring.state = "running";
+  api.monitoring.expectingFrames = true;
+  api.monitoring.frameState = "stalled";
+  await tick();
+  assert.match(elements["monitor-state"].textContent, /프레임 정지/);
+  api.monitoring.fresh = false;
+  await tick();
+  assert.equal(elements["monitor-state"].textContent, "상태 갱신 지연");
+  assert.equal(elements["capture-fps"].textContent, "—");
 });

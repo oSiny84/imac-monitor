@@ -29,6 +29,13 @@ form button { width: 100%; margin-top: 1rem; }
 .tabs .tab.active { color: #07120c; background: #d9f6e5; }
 .tabs .quiet { margin-left: auto; color: #d4dad5; }
 .archive-notice { padding: .85rem 1rem; border: 1px solid #c4a86540; border-radius: .65rem; color: #e1cfa4; background: #30291b; line-height: 1.5; }
+.monitoring-panel { padding: 1rem; margin-bottom: 1rem; border: 1px solid #ffffff18; border-radius: .8rem; background: #121713; }
+.monitoring-panel > .status-dot { margin-bottom: .4rem; font-weight: 700; }
+.monitor-detail { color: #aeb7b0; font-size: .85rem; line-height: 1.5; overflow-wrap: anywhere; }
+.monitoring-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: .9rem; margin: 0; }
+.monitoring-grid dt { color: #91a096; font-size: .75rem; }
+.monitoring-grid dd { margin: .25rem 0 0; font-size: .88rem; font-variant-numeric: tabular-nums; }
+.warning::before { background: #efac70; box-shadow: none; }
 .video-frame { overflow: hidden; aspect-ratio: 16 / 9; border: 1px solid #ffffff16; border-radius: 1rem; background: #000; box-shadow: 0 1rem 4rem #0008; }
 .video-frame iframe { width: 100%; height: 100%; border: 0; }
 .status-row { padding: 1rem .25rem; }

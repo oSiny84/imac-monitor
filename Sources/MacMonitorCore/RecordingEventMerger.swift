@@ -13,10 +13,12 @@ protocol RecordingEventMerging {
 final class FFmpegRecordingEventMerger: RecordingEventMerging {
     private let executableURL: URL
     private let timeout: TimeInterval
+    private let onCompleted: ((URL) -> Void)?
 
-    init(executableURL: URL, timeout: TimeInterval = 30) {
+    init(executableURL: URL, timeout: TimeInterval = 30, onCompleted: ((URL) -> Void)? = nil) {
         self.executableURL = executableURL
         self.timeout = timeout
+        self.onCompleted = onCompleted
     }
 
     func merge(
@@ -32,6 +34,7 @@ final class FFmpegRecordingEventMerger: RecordingEventMerging {
         let destination = uniqueDestination(for: eventStart, in: destinationDirectory)
         if segmentURLs.count == 1 {
             try FileManager.default.moveItem(at: segmentURLs[0], to: destination)
+            onCompleted?(destination)
             return destination
         }
 
@@ -75,6 +78,7 @@ final class FFmpegRecordingEventMerger: RecordingEventMerging {
             throw RecordingEventMergeError.ffmpegFailed(process.terminationStatus)
         }
         try FileManager.default.moveItem(at: partialOutput, to: destination)
+        onCompleted?(destination)
         return destination
     }
 
