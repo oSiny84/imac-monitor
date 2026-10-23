@@ -184,7 +184,7 @@ fi
 for file in "$MAIN_EXECUTABLE" "$MEDIAMTX_EXECUTABLE" "$GATEWAY_EXECUTABLE"; do
     if [[ -x "$file" ]]; then
         pass "$file is executable"
-        if command -v lipo >/dev/null 2>&1 && lipo -verify_arch "$EXPECTED_ARCH" "$file" >/dev/null 2>&1; then
+        if command -v lipo >/dev/null 2>&1 && lipo "$file" -verify_arch "$EXPECTED_ARCH" >/dev/null 2>&1; then
             pass "$file contains $EXPECTED_ARCH"
         else
             fail "$file does not contain $EXPECTED_ARCH"

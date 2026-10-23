@@ -85,7 +85,7 @@ if [[ "${MACMONITOR_TSAN:-0}" == "1" ]]; then
 fi
 swift build -c release --arch "$TARGET_ARCH"
 BIN_DIR="$(swift build -c release --arch "$TARGET_ARCH" --show-bin-path)"
-lipo -verify_arch "$TARGET_ARCH" "$BIN_DIR/MacMonitor"
+lipo "$BIN_DIR/MacMonitor" -verify_arch "$TARGET_ARCH"
 
 mkdir -p "$OUTPUT_DIR"
 rm -rf "$STAGING_DIR"
@@ -114,7 +114,7 @@ for executable in \
     "$STAGING_DIR/Contents/MacOS/MacMonitor" \
     "$STAGING_DIR/Contents/Helpers/mediamtx" \
     "$STAGING_DIR/Contents/Helpers/macmonitor-gateway"; do
-    lipo -verify_arch "$TARGET_ARCH" "$executable"
+    lipo "$executable" -verify_arch "$TARGET_ARCH"
 done
 
 codesign --force --sign - "$STAGING_DIR/Contents/Helpers/mediamtx"

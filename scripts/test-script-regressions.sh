@@ -134,6 +134,13 @@ for script in build-app.sh diagnose.sh; do
     echo "PASS: $script reads the Swift version from Xcode 14.2 output without leaking it"
 done
 
+# lipo reads every argument after -verify_arch as an architecture name.
+if grep -n 'lipo -verify_arch' "$ROOT_DIR/scripts/build-app.sh" "$ROOT_DIR/scripts/diagnose.sh"; then
+    echo 'FAIL: lipo -verify_arch must follow the input file'
+    exit 1
+fi
+echo 'PASS: lipo -verify_arch calls name the input file first'
+
 # Exercise the release download/checksum path without network access. The
 # official release uses sha256sum -b, which prefixes archive names with '*'.
 mkdir -p "$FIXTURE/downloads" "$FIXTURE/archive"
