@@ -18,6 +18,8 @@ Windows에서 만들어져 있던 dist/MacMonitor.app은 포함하지 않습니�
 현재 빌드 스크립트는 Xcode 14.2 / Swift 5.7.x, Go 1.26.x,
 FFmpeg(h264_videotoolbox 인코더 포함)를 요구합니다.
 FFmpeg는 /usr/local/bin/ffmpeg 또는 /opt/homebrew/bin/ffmpeg에서 찾아야 합니다.
+Monterey에서는 Homebrew 대신 evermeet.cx/ffmpeg 의 Intel용 ffmpeg ZIP을
+받아 /usr/local/bin에 복사하는 방법이 간단합니다. 명령: docs/SETUP_MAC.md
 전체 Xcode 및 올바른 Command Line Tools 선택이 필요합니다.
 Xcode 14.2는 App Store가 아니라 https://developer.apple.com/download/all/ 에서
 Xcode_14.2.xip을 받아 응용 프로그램 폴더에 두고 한 번 실행해 설치를 마칩니다.

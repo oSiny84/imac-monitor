@@ -107,10 +107,16 @@ SH
     echo "PASS: $script handles long encoder output, missing encoder, and command failure"
 done
 
-# Xcode 14's swift-driver prefixes the line that carries the Swift version.
+# Xcode 14's swift-driver writes its own version to stderr without a newline,
+# so a terminal shows it joined to the Swift version line.
 cat > "$FIXTURE/bin/swift" <<'SH'
 #!/bin/bash
-printf 'swift-driver version: 1.62.15 Apple Swift version 5.7.2 (swiftlang-5.7.2.135.5 clang-1400.0.29.51)\n'
+if [[ "$TEST_SWIFT_OUTPUT" == split ]]; then
+    printf 'swift-driver version: 1.62.15 ' >&2
+else
+    printf 'swift-driver version: 1.62.15 '
+fi
+printf 'Apple Swift version 5.7.2 (swiftlang-5.7.2.135.5 clang-1400.0.29.51)\n'
 printf 'Target: x86_64-apple-macosx12.0\n'
 SH
 chmod +x "$FIXTURE/bin/swift"
@@ -118,11 +124,14 @@ for script in build-app.sh diagnose.sh; do
     check="$(grep -F -m 1 'SWIFT_VERSION="$(swift --version' "$ROOT_DIR/scripts/$script")"
     check="${check#"${check%%[![:space:]]*}"}"
     [[ -n "$check" ]]
-    if [[ "$(bash -o pipefail -c "$check; printf '%s' \"\$SWIFT_VERSION\"")" != 5.7.2 ]]; then
-        echo "FAIL: $script misread the Xcode 14.2 Swift version"
-        exit 1
-    fi
-    echo "PASS: $script reads the Swift version from Xcode 14.2 output"
+    for mode in split joined; do
+        export TEST_SWIFT_OUTPUT="$mode"
+        if [[ "$(bash -o pipefail -c "$check; printf '%s' \"\$SWIFT_VERSION\"" 2>&1)" != 5.7.2 ]]; then
+            echo "FAIL: $script misread or leaked the Xcode 14.2 Swift version ($mode)"
+            exit 1
+        fi
+    done
+    echo "PASS: $script reads the Swift version from Xcode 14.2 output without leaking it"
 done
 
 # Exercise the release download/checksum path without network access. The

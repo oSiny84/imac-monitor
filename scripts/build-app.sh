@@ -63,7 +63,7 @@ for candidate in /usr/local/bin/ffmpeg /opt/homebrew/bin/ffmpeg; do
         break
     fi
 done
-[[ -n "$FFMPEG_PATH" ]] || fail "FFmpeg is missing from an app-visible path (/usr/local/bin or /opt/homebrew/bin)"
+[[ -n "$FFMPEG_PATH" ]] || fail "FFmpeg is missing from an app-visible path (/usr/local/bin or /opt/homebrew/bin); see docs/SETUP_MAC.md"
 "$FFMPEG_PATH" -hide_banner -encoders 2>/dev/null | grep '[[:space:]]h264_videotoolbox[[:space:]]' >/dev/null || \
     fail "FFmpeg does not provide the h264_videotoolbox encoder"
 
