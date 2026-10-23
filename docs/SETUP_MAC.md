@@ -16,6 +16,13 @@ go version
 ffmpeg -hide_banner -encoders | grep h264_videotoolbox
 ```
 
+Command Line Tools만으로는 빌드할 수 없습니다. App Store는 Monterey에서 실행되지 않는 최신 Xcode만 제공하므로 https://developer.apple.com/download/all/ 에서 `Xcode_14.2.xip`을 받아 압축을 풀고 `/Applications`로 옮깁니다. Xcode를 한 번 실행해 라이선스 동의와 추가 구성 요소 설치를 마친 뒤 Xcode를 활성 개발자 경로로 선택합니다. `xcode-select -p`가 `/Library/Developer/CommandLineTools`이면 `xcodebuild`가 `tool 'xcodebuild' requires Xcode` 오류로 실패합니다.
+
+```bash
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+xcodebuild -version   # Xcode 14.2
+```
+
 빌드 스크립트는 Monterey 호환성을 위해 Go 1.26.x만 허용합니다. FFmpeg는 Homebrew를 사용할 경우 `brew install ffmpeg`로 설치할 수 있지만, Monterey에서 실제 bottle 또는 소스 빌드 가능 여부는 현장에서 확인해야 합니다.
 
 ## 2. 의존성 및 앱 빌드

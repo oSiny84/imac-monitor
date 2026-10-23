@@ -117,7 +117,8 @@ if has_command xcodebuild; then
 fi
 
 if has_command swift; then
-    SWIFT_VERSION="$(swift --version | awk 'NR == 1 { print $4 }')"
+    # Xcode 14 prints "swift-driver version: 1.62.15 Apple Swift version 5.7.2 (...)".
+    SWIFT_VERSION="$(swift --version 2>&1 | awk '{ for (i = 1; i + 2 <= NF; i++) if (v == "" && $i == "Swift" && $(i + 1) == "version") v = $(i + 2) } END { print v }')"
     if [[ "$SWIFT_VERSION" == 5.7* ]]; then
         pass "Swift $SWIFT_VERSION is supported"
     else

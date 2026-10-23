@@ -1,8 +1,8 @@
 MacMonitor — Mac에서 처음 테스트하기
 ====================================
 
-2026-10-20 재점검 수정본입니다. 이전 ZIP 대신 새 폴더에 압축 해제해서 사용하세요.
-변경·검사 기록: docs/RECHECK_2026-10-20.md
+2026-10-23 수정본입니다. 이전 ZIP 대신 새 폴더에 압축 해제해서 사용하세요.
+변경·검사 기록: docs/RECHECK_2026-10-20.md, docs/RECHECK_2026-10-23.md
 
 1. 무엇을 옮기나요?
 GitHub 저장소의 releases 폴더에서 최신 MacMonitor-Mac-Test-날짜-시간.zip을
@@ -19,6 +19,11 @@ Windows에서 만들어져 있던 dist/MacMonitor.app은 포함하지 않습니�
 FFmpeg(h264_videotoolbox 인코더 포함)를 요구합니다.
 FFmpeg는 /usr/local/bin/ffmpeg 또는 /opt/homebrew/bin/ffmpeg에서 찾아야 합니다.
 전체 Xcode 및 올바른 Command Line Tools 선택이 필요합니다.
+Xcode 14.2는 App Store가 아니라 https://developer.apple.com/download/all/ 에서
+Xcode_14.2.xip을 받아 응용 프로그램 폴더에 두고 한 번 실행해 설치를 마칩니다.
+그다음 터미널에서 한 번 실행합니다.
+  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+"tool 'xcodebuild' requires Xcode" 오류는 이 선택이 안 된 상태입니다.
 이 개발 도구들은 빌드 실행 파일이 자동 설치하지 않습니다.
 MediaMTX는 실행 파일이 다운로드하고 검증하므로 인터넷 연결이 필요합니다.
 도구 준비가 안 됐다면 먼저 실행해 오류 로그를 보내주세요.

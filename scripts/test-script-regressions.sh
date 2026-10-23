@@ -107,6 +107,24 @@ SH
     echo "PASS: $script handles long encoder output, missing encoder, and command failure"
 done
 
+# Xcode 14's swift-driver prefixes the line that carries the Swift version.
+cat > "$FIXTURE/bin/swift" <<'SH'
+#!/bin/bash
+printf 'swift-driver version: 1.62.15 Apple Swift version 5.7.2 (swiftlang-5.7.2.135.5 clang-1400.0.29.51)\n'
+printf 'Target: x86_64-apple-macosx12.0\n'
+SH
+chmod +x "$FIXTURE/bin/swift"
+for script in build-app.sh diagnose.sh; do
+    check="$(grep -F -m 1 'SWIFT_VERSION="$(swift --version' "$ROOT_DIR/scripts/$script")"
+    check="${check#"${check%%[![:space:]]*}"}"
+    [[ -n "$check" ]]
+    if [[ "$(bash -o pipefail -c "$check; printf '%s' \"\$SWIFT_VERSION\"")" != 5.7.2 ]]; then
+        echo "FAIL: $script misread the Xcode 14.2 Swift version"
+        exit 1
+    fi
+    echo "PASS: $script reads the Swift version from Xcode 14.2 output"
+done
+
 # Exercise the release download/checksum path without network access. The
 # official release uses sha256sum -b, which prefixes archive names with '*'.
 mkdir -p "$FIXTURE/downloads" "$FIXTURE/archive"

@@ -41,10 +41,16 @@ for command_name in swift xcodebuild go codesign lipo plutil; do
     require_command "$command_name"
 done
 
+# Command Line Tools ship an xcodebuild shim that only prints an xcode-select error.
+DEVELOPER_PATH="$(xcode-select -p 2>/dev/null || true)"
+[[ "$DEVELOPER_PATH" == *.app/Contents/Developer ]] || \
+    fail "Xcode 14.2 is not the active developer directory (found ${DEVELOPER_PATH:-none}); install Xcode 14.2, then run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+
 XCODE_VERSION="$(xcodebuild -version | awk 'NR == 1 { print $2 }')"
 [[ "$XCODE_VERSION" == "14.2" ]] || fail "Xcode 14.2 is required; found ${XCODE_VERSION:-unknown}"
 
-SWIFT_VERSION="$(swift --version | awk 'NR == 1 { print $4 }')"
+# Xcode 14 prints "swift-driver version: 1.62.15 Apple Swift version 5.7.2 (...)".
+SWIFT_VERSION="$(swift --version 2>&1 | awk '{ for (i = 1; i + 2 <= NF; i++) if (v == "" && $i == "Swift" && $(i + 1) == "version") v = $(i + 2) } END { print v }')"
 [[ "$SWIFT_VERSION" == 5.7* ]] || fail "Swift 5.7.x is required; found ${SWIFT_VERSION:-unknown}"
 
 GO_VERSION="$(go env GOVERSION)"
