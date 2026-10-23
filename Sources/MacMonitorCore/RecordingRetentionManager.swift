@@ -69,11 +69,11 @@ public final class RecordingRetentionManager {
         try FileManager.default.createDirectory(at: recordingsDirectory, withIntermediateDirectories: true)
         queue.sync {
             guard timer == nil else { return }
-            let timer = DispatchSource.makeTimerSource(queue: queue)
-            timer.schedule(deadline: .now() + 2, repeating: 2)
-            timer.setEventHandler { [weak self] in self?.scan(now: Date(), finalizing: false) }
-            self.timer = timer
-            timer.resume()
+            let scanTimer = DispatchSource.makeTimerSource(queue: queue)
+            scanTimer.schedule(deadline: .now() + 2, repeating: 2)
+            scanTimer.setEventHandler { [weak self] in self?.scan(now: Date(), finalizing: false) }
+            self.timer = scanTimer
+            scanTimer.resume()
         }
     }
 

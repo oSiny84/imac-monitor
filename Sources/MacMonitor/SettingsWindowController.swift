@@ -81,11 +81,11 @@ final class SettingsWindowController: NSWindowController {
         let note = NSTextField(wrappingLabelWithString: "움직임 없는 구간은 임시 버퍼에서 삭제됩니다. 시스템 잠자기는 1분 전 감시를 정리하고, 예약 깨우기 후 화면을 끕니다(잠깐 켜질 수 있음). 화면만 끄기는 시스템을 유지하되 휴식 중 감시는 중단합니다. 두 모드 모두 정해진 시각에 감시를 재개합니다. 앱을 실행·인증한 채 두세요. 키보드·마우스 사용은 우선하며, 로그아웃·재부팅 후에는 재인증이 필요합니다.")
         note.textColor = .secondaryLabelColor
 
-        let save = NSButton(title: "저장", target: self, action: #selector(save))
-        save.keyEquivalent = "\r"
-        let openFolder = NSButton(title: "설정 폴더 열기", target: self, action: #selector(openConfigurationFolder))
-        let password = NSButton(title: "앱 비밀번호 변경", target: self, action: #selector(changePassword))
-        let buttons = NSStackView(views: [openFolder, password, NSView(), save])
+        let saveButton = NSButton(title: "저장", target: self, action: #selector(save))
+        saveButton.keyEquivalent = "\r"
+        let openFolderButton = NSButton(title: "설정 폴더 열기", target: self, action: #selector(openConfigurationFolder))
+        let passwordButton = NSButton(title: "앱 비밀번호 변경", target: self, action: #selector(changePassword))
+        let buttons = NSStackView(views: [openFolderButton, passwordButton, NSView(), saveButton])
         buttons.orientation = .horizontal
 
         statusLabel.textColor = .secondaryLabelColor
