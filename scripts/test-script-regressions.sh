@@ -307,3 +307,18 @@ env HOME="$UNINSTALL_HOME" \
     exit 1
 }
 echo 'PASS: uninstall --recordings removes recorded video too'
+
+# "pkill -f MacMonitor" also matches this script: a double-clicked
+# Uninstall MacMonitor.command runs from a path containing the folder name,
+# so the uninstall would kill its own shell before finishing.
+seed_uninstall
+run_uninstall none > /dev/null 2>&1
+if grep -q 'pkill -f MacMonitor' "$UNINSTALL_LOG"; then
+    echo 'FAIL: uninstall matches its own command line when stopping the app'
+    exit 1
+fi
+grep -q 'pkill -x MacMonitor' "$UNINSTALL_LOG" || {
+    echo 'FAIL: uninstall does not stop the app by exact process name'
+    exit 1
+}
+echo 'PASS: uninstall stops the app by name without matching its own path'

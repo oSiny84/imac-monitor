@@ -78,7 +78,11 @@ if command -v osascript >/dev/null 2>&1; then
     osascript -e "quit app id \"$BUNDLE_ID\"" >/dev/null 2>&1
 fi
 STOPPED=0
-for pattern in "MacMonitor" "Contents/Helpers/mediamtx" "Contents/Helpers/macmonitor-gateway"; do
+# -x matches the process name only. "pkill -f MacMonitor" would also match this
+# script, whose own path contains the folder name, and kill the uninstall midway.
+if pkill -x MacMonitor >/dev/null 2>&1; then STOPPED=1; fi
+# The helper patterns are paths inside the bundle, so they cannot match this script.
+for pattern in "Contents/Helpers/mediamtx" "Contents/Helpers/macmonitor-gateway"; do
     if pkill -f "$pattern" >/dev/null 2>&1; then STOPPED=1; fi
 done
 if [[ "$STOPPED" -eq 1 ]]; then
