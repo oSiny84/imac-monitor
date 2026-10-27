@@ -107,6 +107,40 @@ SH
     echo "PASS: $script handles long encoder output, missing encoder, and command failure"
 done
 
+# Xcode 14's swift-driver writes its own version to stderr without a newline,
+# so a terminal shows it joined to the Swift version line.
+cat > "$FIXTURE/bin/swift" <<'SH'
+#!/bin/bash
+if [[ "$TEST_SWIFT_OUTPUT" == split ]]; then
+    printf 'swift-driver version: 1.62.15 ' >&2
+else
+    printf 'swift-driver version: 1.62.15 '
+fi
+printf 'Apple Swift version 5.7.2 (swiftlang-5.7.2.135.5 clang-1400.0.29.51)\n'
+printf 'Target: x86_64-apple-macosx12.0\n'
+SH
+chmod +x "$FIXTURE/bin/swift"
+for script in build-app.sh diagnose.sh; do
+    check="$(grep -F -m 1 'SWIFT_VERSION="$(swift --version' "$ROOT_DIR/scripts/$script")"
+    check="${check#"${check%%[![:space:]]*}"}"
+    [[ -n "$check" ]]
+    for mode in split joined; do
+        export TEST_SWIFT_OUTPUT="$mode"
+        if [[ "$(bash -o pipefail -c "$check; printf '%s' \"\$SWIFT_VERSION\"" 2>&1)" != 5.7.2 ]]; then
+            echo "FAIL: $script misread or leaked the Xcode 14.2 Swift version ($mode)"
+            exit 1
+        fi
+    done
+    echo "PASS: $script reads the Swift version from Xcode 14.2 output without leaking it"
+done
+
+# lipo reads every argument after -verify_arch as an architecture name.
+if grep -n 'lipo -verify_arch' "$ROOT_DIR/scripts/build-app.sh" "$ROOT_DIR/scripts/diagnose.sh"; then
+    echo 'FAIL: lipo -verify_arch must follow the input file'
+    exit 1
+fi
+echo 'PASS: lipo -verify_arch calls name the input file first'
+
 # Exercise the release download/checksum path without network access. The
 # official release uses sha256sum -b, which prefixes archive names with '*'.
 mkdir -p "$FIXTURE/downloads" "$FIXTURE/archive"

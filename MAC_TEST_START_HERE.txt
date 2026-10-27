@@ -1,11 +1,14 @@
 MacMonitor — Mac에서 처음 테스트하기
 ====================================
 
-2026-10-20 기능 5·6 후속 리뷰 수정본입니다. 이전 ZIP 대신 새 폴더에 압축 해제해서 사용하세요.
-변경·검사 기록: docs/RECHECK_2026-10-20.md
+2026-10-20 기능 1~6 수정본에 2026-10-23 빌드 도구·Xcode 14.2 컴파일 수정을 합친 것입니다.
+이전 ZIP 대신 새 폴더에 압축 해제해서 사용하세요.
+변경·검사 기록: docs/RECHECK_2026-10-20.md, docs/RECHECK_2026-10-23.md
 최신 수정 기록: docs/REVIEW_FIXES_2026-10-20.md
-너무 작은 감지 영역 거부, 실제 표본 좌표 일치, Safari 뒤로가기 복원,
-공백·따옴표·$가 포함된 FFmpeg 경로 처리를 수정했습니다. Mac 실기 검증은 남아 있습니다.
+2026-10-23 수정: Xcode 선택 확인, Xcode 14의 Swift 버전 출력 파싱, Monterey용 FFmpeg 설치 안내,
+Xcode 14.2 SDK 컴파일 오류(.AVCaptureSessionRuntimeError), lipo 인자 순서.
+2026-10-20 수정: 너무 작은 감지 영역 거부, 실제 표본 좌표 일치, Safari 뒤로가기 복원,
+공백·따옴표·$가 포함된 FFmpeg 경로 처리. Mac 실기 검증은 남아 있습니다.
 추가 기능 1: 감시 중지·화면 전용 휴식 중 과거 녹화의 원격 접근 유지.
 HTTPS 설정 뒤 추가 테스트: docs/FEATURE_1_ARCHIVE_ACCESS.md
 추가 기능 2: 실제 프레임·FPS·녹화·디스크 상태와 프레임 단절 복구.
@@ -18,6 +21,10 @@ HTTPS 설정 뒤 추가 테스트: docs/FEATURE_1_ARCHIVE_ACCESS.md
 사용 방법과 검사: docs/FEATURE_5_MOTION_REGIONS.md
 추가 기능 6: 원격 자동·원본·표준·절약 화질과 수신 통계. 녹화 설정은 유지.
 추가 인코딩·재연결·미검증 범위: docs/FEATURE_6_REMOTE_QUALITY.md
+
+주의: releases 폴더의 ZIP은 아직 이 수정본과 일치하지 않습니다.
+20261023 ZIP에는 기능 1~6이 없고, 20261020 ZIP에는 2026-10-23 빌드 수정이 없습니다.
+합쳐진 소스로 새 ZIP을 만든 뒤 그것을 받으세요 (아래 1번 참고).
 
 1. 무엇을 옮기나요?
 GitHub 저장소의 releases 폴더에서 최신 MacMonitor-Mac-Test-날짜-시간.zip을
@@ -33,7 +40,14 @@ Windows에서 만들어져 있던 dist/MacMonitor.app은 포함하지 않습니�
 현재 빌드 스크립트는 Xcode 14.2 / Swift 5.7.x, Go 1.26.x,
 FFmpeg(h264_videotoolbox 인코더 포함)를 요구합니다.
 FFmpeg는 /usr/local/bin/ffmpeg 또는 /opt/homebrew/bin/ffmpeg에서 찾아야 합니다.
+Monterey에서는 Homebrew 대신 evermeet.cx/ffmpeg 의 Intel용 ffmpeg ZIP을
+받아 /usr/local/bin에 복사하는 방법이 간단합니다. 명령: docs/SETUP_MAC.md
 전체 Xcode 및 올바른 Command Line Tools 선택이 필요합니다.
+Xcode 14.2는 App Store가 아니라 https://developer.apple.com/download/all/ 에서
+Xcode_14.2.xip을 받아 응용 프로그램 폴더에 두고 한 번 실행해 설치를 마칩니다.
+그다음 터미널에서 한 번 실행합니다.
+  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+"tool 'xcodebuild' requires Xcode" 오류는 이 선택이 안 된 상태입니다.
 이 개발 도구들은 빌드 실행 파일이 자동 설치하지 않습니다.
 MediaMTX는 실행 파일이 다운로드하고 검증하므로 인터넷 연결이 필요합니다.
 도구 준비가 안 됐다면 먼저 실행해 오류 로그를 보내주세요.

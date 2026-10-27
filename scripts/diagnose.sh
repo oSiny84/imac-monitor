@@ -117,7 +117,8 @@ if has_command xcodebuild; then
 fi
 
 if has_command swift; then
-    SWIFT_VERSION="$(swift --version | awk 'NR == 1 { print $4 }')"
+    # Xcode 14 prints "swift-driver version: 1.62.15 Apple Swift version 5.7.2 (...)".
+    SWIFT_VERSION="$(swift --version 2>&1 | awk '{ for (i = 1; i + 2 <= NF; i++) if (v == "" && $i == "Swift" && $(i + 1) == "version") v = $(i + 2) } END { print v }')"
     if [[ "$SWIFT_VERSION" == 5.7* ]]; then
         pass "Swift $SWIFT_VERSION is supported"
     else
@@ -183,7 +184,7 @@ fi
 for file in "$MAIN_EXECUTABLE" "$MEDIAMTX_EXECUTABLE" "$GATEWAY_EXECUTABLE"; do
     if [[ -x "$file" ]]; then
         pass "$file is executable"
-        if command -v lipo >/dev/null 2>&1 && lipo -verify_arch "$EXPECTED_ARCH" "$file" >/dev/null 2>&1; then
+        if command -v lipo >/dev/null 2>&1 && lipo "$file" -verify_arch "$EXPECTED_ARCH" >/dev/null 2>&1; then
             pass "$file contains $EXPECTED_ARCH"
         else
             fail "$file does not contain $EXPECTED_ARCH"

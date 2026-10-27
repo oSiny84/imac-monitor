@@ -64,8 +64,9 @@ public final class CameraCaptureService: NSObject, CameraCapturing {
         self.deviceUniqueIDProvider = deviceUniqueIDProvider
         self.frameHandler = frameHandler
         super.init()
+        // The macOS 13.1 SDK in Xcode 14.2 predates AVCaptureSession.runtimeErrorNotification.
         runtimeErrorObserver = NotificationCenter.default.addObserver(
-            forName: AVCaptureSession.runtimeErrorNotification,
+            forName: .AVCaptureSessionRuntimeError,
             object: session,
             queue: nil
         ) { [weak self] notification in
