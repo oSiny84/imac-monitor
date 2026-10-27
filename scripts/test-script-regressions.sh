@@ -193,3 +193,117 @@ if bash "$FIXTURE/scripts/fetch-mediamtx.sh" >/dev/null 2>&1; then
 fi
 [[ "$(cat "$FIXTURE/vendor/mediamtx/mediamtx")" == original ]]
 echo 'PASS: MediaMTX checksum mismatch preserves the previous binary'
+
+# Uninstall runs against a fixture root and HOME so no real Mac state is read
+# or deleted. Every macOS-only tool is mocked and logs the argv it received.
+UNINSTALL_ROOT="$FIXTURE/uninstall-root"
+UNINSTALL_HOME="$FIXTURE/uninstall-home"
+UNINSTALL_LOG="$FIXTURE/uninstall-calls.log"
+mkdir -p "$UNINSTALL_ROOT/scripts"
+cp "$ROOT_DIR/scripts/uninstall.sh" "$UNINSTALL_ROOT/scripts/"
+for tool in osascript pkill launchctl security tccutil sudo; do
+    cat > "$FIXTURE/bin/$tool" <<SH
+#!/bin/bash
+printf '$tool %s\n' "\$*" >> "$UNINSTALL_LOG"
+exit 0
+SH
+    chmod +x "$FIXTURE/bin/$tool"
+done
+cat > "$FIXTURE/bin/pmset" <<SH
+#!/bin/bash
+printf 'pmset %s\n' "\$*" >> "$UNINSTALL_LOG"
+if [[ "\${1:-}" == "-g" ]]; then
+    printf 'Repeating power events:\n'
+    [[ "\${TEST_PMSET_REPEAT:-none}" == repeat ]] && printf '  sleep at 23:00PM every day\n'
+    exit 0
+fi
+exit 0
+SH
+chmod +x "$FIXTURE/bin/pmset"
+
+seed_uninstall() {
+    rm -rf "$UNINSTALL_HOME" "$UNINSTALL_ROOT/dist" "$FIXTURE/uninstall-data"
+    : > "$UNINSTALL_LOG"
+    mkdir -p "$UNINSTALL_HOME/Library/LaunchAgents"
+    printf 'agent\n' > "$UNINSTALL_HOME/Library/LaunchAgents/local.macmonitor.app.plist"
+    mkdir -p "$UNINSTALL_ROOT/dist/MacMonitor.app/Contents"
+    mkdir -p "$FIXTURE/uninstall-data/Recordings" "$FIXTURE/uninstall-data/Diagnostics"
+    printf 'config\n' > "$FIXTURE/uninstall-data/config.json"
+    printf 'clip\n' > "$FIXTURE/uninstall-data/Recordings/event.mp4"
+}
+
+run_uninstall() {
+    env HOME="$UNINSTALL_HOME" \
+        MACMONITOR_APP_SUPPORT="$FIXTURE/uninstall-data" \
+        TEST_PMSET_REPEAT="${1:-none}" \
+        bash "$UNINSTALL_ROOT/scripts/uninstall.sh" --yes </dev/null
+}
+
+seed_uninstall
+run_uninstall none > "$FIXTURE/uninstall-out.txt" 2>&1 || {
+    echo 'FAIL: uninstall reported a failure on a clean fixture'
+    cat "$FIXTURE/uninstall-out.txt"
+    exit 1
+}
+[[ -f "$FIXTURE/uninstall-data/Recordings/event.mp4" ]] || {
+    echo 'FAIL: uninstall deleted recordings without --recordings'
+    exit 1
+}
+[[ ! -e "$FIXTURE/uninstall-data/config.json" ]] || {
+    echo 'FAIL: uninstall left the configuration behind'
+    exit 1
+}
+[[ ! -e "$FIXTURE/uninstall-data/Diagnostics" ]] || {
+    echo 'FAIL: uninstall left the diagnostics directory behind'
+    exit 1
+}
+[[ ! -e "$UNINSTALL_HOME/Library/LaunchAgents/local.macmonitor.app.plist" ]] || {
+    echo 'FAIL: uninstall left the launch agent behind'
+    exit 1
+}
+[[ ! -e "$UNINSTALL_ROOT/dist/MacMonitor.app" ]] || {
+    echo 'FAIL: uninstall left the built app behind'
+    exit 1
+}
+grep -q 'security delete-generic-password' "$UNINSTALL_LOG" || {
+    echo 'FAIL: uninstall did not remove the keychain item'
+    exit 1
+}
+echo 'PASS: uninstall clears app state and keeps recordings by default'
+
+# A schedule the user set must never be cancelled on our own initiative.
+grep -q 'pmset repeat cancel' "$UNINSTALL_LOG" && {
+    echo 'FAIL: uninstall cancelled the power schedule without a repeat entry'
+    exit 1
+}
+seed_uninstall
+run_uninstall repeat > /dev/null 2>&1
+grep -q 'pmset repeat cancel' "$UNINSTALL_LOG" && {
+    echo 'FAIL: uninstall cancelled the power schedule without a separate confirmation'
+    exit 1
+}
+echo 'PASS: uninstall never cancels the machine-wide power schedule unprompted'
+
+seed_uninstall
+run_uninstall none > /dev/null 2>&1
+rm -rf "$FIXTURE/uninstall-data/Recordings"
+run_uninstall none > /dev/null 2>&1 || {
+    echo 'FAIL: a second uninstall run reported a failure'
+    exit 1
+}
+[[ ! -e "$FIXTURE/uninstall-data" ]] || {
+    echo 'FAIL: uninstall left an empty data directory once recordings were gone'
+    exit 1
+}
+echo 'PASS: uninstall is idempotent and removes the data directory once empty'
+
+seed_uninstall
+env HOME="$UNINSTALL_HOME" \
+    MACMONITOR_APP_SUPPORT="$FIXTURE/uninstall-data" \
+    TEST_PMSET_REPEAT=none \
+    bash "$UNINSTALL_ROOT/scripts/uninstall.sh" --yes --recordings </dev/null > /dev/null 2>&1
+[[ ! -e "$FIXTURE/uninstall-data" ]] || {
+    echo 'FAIL: --recordings left the data directory behind'
+    exit 1
+}
+echo 'PASS: uninstall --recordings removes recorded video too'

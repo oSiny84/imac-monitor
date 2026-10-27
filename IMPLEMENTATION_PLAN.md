@@ -2,6 +2,7 @@
 
 ## 상태와 작업 경계
 
+- 2026-10-27 제거 스크립트를 추가했다. `scripts/uninstall.sh`와 더블클릭용 `Uninstall MacMonitor.command`가 실행 중인 앱·도우미, 로그인 자동 실행 등록, 키체인 앱 비밀번호, 애플리케이션 데이터, 빌드된 번들, 카메라 권한 기록을 지운다. 녹화는 기본으로 남기고 `--recordings`를 줄 때만 지운다. Mac 전체 반복 전원 예약은 앱이 넣은 것인지 사용자가 넣은 것인지 구분할 수 없으므로 현재 예약을 보여주고 따로 확인받은 뒤에만 해제하며, `--yes`는 이 단계를 덮지 않는다. 회귀 검사 4건을 추가했으나 macOS 전용 명령을 모의한 스크립트 수준 검사이고 실제 Mac 동작은 미검증이다.
 - 2026-10-27 로컬 작업분과 클라우드 작업분을 `main`으로 병합했다. 두 갈래는 같은 기준 커밋에서 갈라져 있었고, 기능 1~6을 담은 로컬 6커밋은 원격에 올라간 적이 없었다. 배포 묶음은 병합 소스로 다시 만들었고 `releases/`에서 날짜·시각이 가장 늦은 파일이다. 정확한 파일명과 SHA256은 `releases/README.md`에 적었다. 그 이전 묶음은 어느 한쪽 작업분이 빠져 있으므로 쓰지 않는다.
 - 2026-10-23 대상 iMac의 첫 원클릭 빌드 보고를 반영했다: Command Line Tools만 선택된 상태의 `xcodebuild` 실패, Xcode 14의 `swift --version` 출력 파싱, Monterey용 FFmpeg 설치 안내, Xcode 14.2의 macOS 13.1 SDK에 없는 `AVCaptureSession.runtimeErrorNotification`, `lipo -verify_arch` 인자 순서를 수정했다. 상세는 `docs/RECHECK_2026-10-23.md`.
 - 대상 iMac에서 통과한 범위의 한계: 2026-10-23 보고에서 Swift 테스트·Thread Sanitizer·릴리스 빌드가 통과한 대상은 기능 1~6이 없는 76개 파일 묶음이다. 병합 후 추가된 73개 파일은 아직 Swift 컴파일을 거치지 않았으므로, 첫 빌드가 멈추면 이 범위를 먼저 본다.
