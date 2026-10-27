@@ -47,7 +47,7 @@ AVFoundation 720p/15fps
 
 ## Mac에서 준비하고 실행
 
-Mac으로 옮길 최신 소스 ZIP은 [releases](releases/)에 있습니다. 초기 오류 수정은 [재점검 기록](docs/RECHECK_2026-10-20.md), 기능 5·6의 감지 표본·뒤로가기 복원·특수문자 실행 경로 수정은 [후속 리뷰 수정 기록](docs/REVIEW_FIXES_2026-10-20.md)에 정리했습니다. 실제 Mac에서의 Swift 빌드·카메라·전원 동작은 검증 전입니다.
+Mac으로 옮길 최신 소스 ZIP은 [releases](releases/)에 있습니다. 날짜·시각이 가장 늦은 묶음이 2026-10-27 병합본입니다. 그 이전 묶음에는 기능 1~6과 2026-10-23 빌드 수정 중 한쪽이 빠져 있으니 받지 마세요. 초기 오류 수정은 [재점검 기록](docs/RECHECK_2026-10-20.md), 기능 5·6의 감지 표본·뒤로가기 복원·특수문자 실행 경로 수정은 [후속 리뷰 수정 기록](docs/REVIEW_FIXES_2026-10-20.md), 대상 iMac 첫 빌드 보고에 따른 빌드 도구·Xcode 14.2 컴파일 수정은 [2026-10-23 재점검 기록](docs/RECHECK_2026-10-23.md)에 정리했습니다. 병합 소스의 Swift 빌드와 실제 카메라·전원 동작은 검증 전입니다.
 
 전체 순서는 [docs/SETUP_MAC.md](docs/SETUP_MAC.md)에 있습니다. 요약하면 다음과 같습니다.
 
@@ -63,7 +63,7 @@ chmod +x scripts/*.sh
 open dist/MacMonitor.app
 ```
 
-빌드에는 Xcode 14.2, Go 1.26.x, 앱이 실제로 찾을 수 있는 경로의 FFmpeg가 필요합니다. 빌드 스크립트는 도구와 버전을 먼저 검사하고 Swift·Go 테스트 후 Intel `x86_64` 앱을 임시 번들에 조립합니다. 아키텍처·plist·privacy manifest·서명을 모두 확인한 번들만 `dist/MacMonitor.app`으로 교체하므로 패키징 실패 시 기존 앱은 유지됩니다. `MACMONITOR_TSAN=1 ./scripts/build-app.sh`로 Thread Sanitizer 테스트까지 포함할 수 있습니다.
+빌드에는 Xcode 14.2, Go 1.26.x, 앱이 실제로 찾을 수 있는 경로의 FFmpeg가 필요합니다. Command Line Tools만 선택된 상태로는 빌드되지 않으므로 `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`로 Xcode를 활성 개발자 경로로 지정해야 합니다. Monterey에서 Homebrew bottle이 없을 때의 FFmpeg 설치 절차는 [docs/SETUP_MAC.md](docs/SETUP_MAC.md)에 있습니다. 빌드 스크립트는 도구와 버전을 먼저 검사하고 Swift·Go 테스트 후 Intel `x86_64` 앱을 임시 번들에 조립합니다. 아키텍처·plist·privacy manifest·서명을 모두 확인한 번들만 `dist/MacMonitor.app`으로 교체하므로 패키징 실패 시 기존 앱은 유지됩니다. `MACMONITOR_TSAN=1 ./scripts/build-app.sh`로 Thread Sanitizer 테스트까지 포함할 수 있습니다.
 
 `diagnose.sh`는 앱 실행 전에 VideoToolbox 실제 1프레임 인코딩, 번들 아키텍처와 서명, MediaMTX 버전과 생성 설정, 앱 데이터 권한을 확인합니다. 게이트웨이가 설정되어 있으면 JSON, 인증서/개인키 짝, 인증서 유효기간·호스트명, 녹화 경로도 서버를 열지 않고 검사합니다. 실패 항목이 하나라도 있으면 종료 코드 1을 반환합니다.
 
@@ -110,7 +110,9 @@ HTTPS를 설정해 두면 앱 비밀번호 확인 후 웹 서버가 감시와 �
 
 이 Windows 환경에서는 Swift/macOS 프레임워크를 컴파일하거나 카메라·VideoToolbox·전원 동작을 실행할 수 없습니다. MediaMTX 1.21.1 설정 기동, Go 테스트 및 macOS/amd64 교차 빌드는 여기서 확인했지만 아래 항목은 대상 iMac에서 판정해야 합니다.
 
-- Swift 패키지의 Xcode 14.2 컴파일
+2026-10-23 대상 iMac 보고에서 Swift 테스트·Thread Sanitizer·릴리스 빌드가 통과했습니다. 다만 그때 빌드한 묶음은 기능 1~6이 없는 76개 파일 소스였고, 병합으로 들어온 신규 파일은 아직 어느 환경에서도 컴파일된 적이 없습니다.
+
+- 기능 1~6을 포함한 병합 소스의 Xcode 14.2 컴파일
 - 카메라 권한과 실제 720p/15fps 포맷
 - `h264_videotoolbox` 인코더 및 FFmpeg tee 동작
 - 화면 꺼짐·잠금 상태의 프레임/녹화 지속
@@ -119,4 +121,4 @@ HTTPS를 설정해 두면 앱 비밀번호 확인 후 웹 서버가 감시와 �
 - 장시간 CPU·메모리·발열·디스크 사용
 - 인코딩된 내용 길이가 벽시계 시간과 일치하는지 (세그먼트 간격 5초 유지)
 
-검증 절차는 [docs/MAC_VALIDATION.md](docs/MAC_VALIDATION.md), 네트워크 경계는 [docs/NETWORK_SECURITY.md](docs/NETWORK_SECURITY.md)를 따릅니다. 2026-10-07 신뢰성 수정의 변경 내용과 미검증 범위는 [docs/RELIABILITY_FIXES.md](docs/RELIABILITY_FIXES.md)에 있습니다.
+검증 절차는 [docs/MAC_VALIDATION.md](docs/MAC_VALIDATION.md), 네트워크 경계는 [docs/NETWORK_SECURITY.md](docs/NETWORK_SECURITY.md)를 따릅니다. 2026-10-07 신뢰성 수정의 변경 내용과 미검증 범위는 [docs/RELIABILITY_FIXES.md](docs/RELIABILITY_FIXES.md), 2026-10-23 빌드 도구·컴파일 수정은 [docs/RECHECK_2026-10-23.md](docs/RECHECK_2026-10-23.md)에 있습니다.
