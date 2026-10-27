@@ -22,9 +22,8 @@ HTTPS 설정 뒤 추가 테스트: docs/FEATURE_1_ARCHIVE_ACCESS.md
 추가 기능 6: 원격 자동·원본·표준·절약 화질과 수신 통계. 녹화 설정은 유지.
 추가 인코딩·재연결·미검증 범위: docs/FEATURE_6_REMOTE_QUALITY.md
 
-주의: releases 폴더의 ZIP은 아직 이 수정본과 일치하지 않습니다.
-20261023 ZIP에는 기능 1~6이 없고, 20261020 ZIP에는 2026-10-23 빌드 수정이 없습니다.
-합쳐진 소스로 새 ZIP을 만든 뒤 그것을 받으세요 (아래 1번 참고).
+releases 폴더에서 날짜·시각이 가장 늦은 ZIP이 이 합본 소스입니다.
+그 이전 ZIP에는 기능 1~6과 2026-10-23 빌드 수정 중 한쪽이 빠져 있으니 받지 마세요.
 
 1. 무엇을 옮기나요?
 GitHub 저장소의 releases 폴더에서 최신 MacMonitor-Mac-Test-날짜-시간.zip을
