@@ -8,13 +8,32 @@ final class RemoteStreamProfilesTests: XCTestCase {
         let paths = try RemoteStreamProfiles.paths(ffmpegURL: URL(fileURLWithPath: "/usr/local/bin/ffmpeg"))
         XCTAssertTrue(paths.contains("live-balanced:"))
         XCTAssertTrue(paths.contains("live-low:"))
-        XCTAssertTrue(paths.contains("fps=10,scale=854:480"))
-        XCTAssertTrue(paths.contains("fps=8,scale=640:360"))
         XCTAssertEqual(paths.components(separatedBy: "runOnDemandCloseAfter: 5s").count - 1, 2)
-        XCTAssertTrue(paths.contains("127.0.0.1:8554/live"))
         XCTAssertFalse(paths.contains("segment-"))
         XCTAssertFalse(paths.contains("tee"))
         XCTAssertFalse(paths.contains("0.0.0.0"))
+        // Each command is a JSON scalar, and Darwin's JSONEncoder writes "/" as "\/", so the
+        // RTSP URLs are only visible after decoding. The pinned-binary tests below prove
+        // MediaMTX accepts that form; this test checks what the commands say.
+        let commands = try Self.runOnDemandCommands(in: paths)
+        XCTAssertEqual(commands.count, 2)
+        XCTAssertTrue(commands[0].contains("'fps=10,scale=854:480'"))
+        XCTAssertTrue(commands[1].contains("'fps=8,scale=640:360'"))
+        XCTAssertTrue(commands[0].hasSuffix("'rtsp://127.0.0.1:8554/live-balanced'"))
+        XCTAssertTrue(commands[1].hasSuffix("'rtsp://127.0.0.1:8554/live-low'"))
+        for command in commands {
+            XCTAssertTrue(command.contains("'-i' 'rtsp://127.0.0.1:8554/live'"))
+            XCTAssertFalse(command.contains("0.0.0.0"))
+        }
+    }
+
+    private static func runOnDemandCommands(in paths: String) throws -> [String] {
+        var commands: [String] = []
+        for line in paths.components(separatedBy: "\n") {
+            guard let range = line.range(of: "runOnDemand: ") else { continue }
+            commands.append(try JSONDecoder().decode(String.self, from: Data(line[range.upperBound...].utf8)))
+        }
+        return commands
     }
     func testExecutablePathIsOnlyPassedInEnvironmentWithoutReparsing() throws {
         for path in ["/usr/local/bin/ffmpeg", "/Applications/O'Brien Camera/ffmpeg", "/Applications/$HOME ${USER} $$ Camera/ffmpeg", "/Applications/한글 \\\" Camera/ffmpeg"] {
@@ -35,11 +54,22 @@ final class RemoteStreamProfilesTests: XCTestCase {
         }
     }
 
-    func testExecutablePathControlCharactersAreRejectedForConfigAndEnvironment() {
+    func testExecutablePathControlCharactersAreRejectedForConfigAndEnvironment() throws {
         for character in ["\n", "\r", "\0"] {
             let url = URL(fileURLWithPath: "/tmp/bad\(character)ffmpeg")
-            XCTAssertThrowsError(try RemoteStreamProfiles.paths(ffmpegURL: url))
-            XCTAssertThrowsError(try RemoteStreamProfiles.environment(ffmpegURL: url, inheriting: [:]))
+            if url.path.contains(character) {
+                // The file URL kept the character, so the validator must refuse it.
+                XCTAssertThrowsError(try RemoteStreamProfiles.paths(ffmpegURL: url), character.debugDescription)
+                XCTAssertThrowsError(try RemoteStreamProfiles.environment(ffmpegURL: url, inheriting: [:]), character.debugDescription)
+            } else {
+                // Foundation builds file URLs from a C path, so an embedded NUL never survives
+                // into url.path and cannot reach the validator. Whatever does reach the config
+                // and the environment must then be free of it.
+                let environment = try RemoteStreamProfiles.environment(ffmpegURL: url, inheriting: [:])
+                let value = try XCTUnwrap(environment[RemoteStreamProfiles.ffmpegEnvironmentKey])
+                XCTAssertFalse(value.contains(character), character.debugDescription)
+                XCTAssertFalse(try RemoteStreamProfiles.paths(ffmpegURL: url).contains(character), character.debugDescription)
+            }
         }
     }
 
