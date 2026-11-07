@@ -13,6 +13,8 @@ public struct FFmpegPipelineConfiguration {
     public let framesPerSecond: Int
     public let bitrateKbps: Int
     public let segmentSeconds: Int
+    /// False publishes the live stream only and writes nothing to the spool.
+    public let recordingEnabled: Bool
 
     public init(
         executableURL: URL,
@@ -23,7 +25,8 @@ public struct FFmpegPipelineConfiguration {
         height: Int = 720,
         framesPerSecond: Int = 15,
         bitrateKbps: Int = 1_200,
-        segmentSeconds: Int = 5
+        segmentSeconds: Int = 5,
+        recordingEnabled: Bool = true
     ) {
         self.executableURL = executableURL
         self.spoolDirectory = spoolDirectory
@@ -34,6 +37,7 @@ public struct FFmpegPipelineConfiguration {
         self.framesPerSecond = framesPerSecond
         self.bitrateKbps = bitrateKbps
         self.segmentSeconds = segmentSeconds
+        self.recordingEnabled = recordingEnabled
     }
 }
 
@@ -243,18 +247,19 @@ public final class FFmpegPipeline {
         }
     }
 
-    private func arguments() -> [String] {
+    func arguments() -> [String] {
         let segmentPattern = configuration.spoolDirectory
             .appendingPathComponent("segment-%Y%m%dT%H%M%S.mp4")
             .path
-        let teeTarget = [
-            // A local publish failure must restart the pipeline; silently dropping
-            // this slave would leave monitoring 'running' without any live video.
-            "[f=rtsp:rtsp_transport=tcp:onfail=abort]\(configuration.rtspPublishURL.absoluteString)",
+        // A local publish failure must restart the pipeline; silently dropping
+        // this slave would leave monitoring 'running' without any live video.
+        var teeOutputs = ["[f=rtsp:rtsp_transport=tcp:onfail=abort]\(configuration.rtspPublishURL.absoluteString)"]
+        if configuration.recordingEnabled {
             // Recording is essential: surface a failed output through process termination
             // so MonitoringCoordinator can recover instead of silently losing recordings.
-            "[f=segment:segment_time=\(configuration.segmentSeconds):segment_time_delta=0.033:reset_timestamps=1:strftime=1:segment_format=mp4:segment_format_options=movflags=+faststart:onfail=abort]\(segmentPattern)"
-        ].joined(separator: "|")
+            teeOutputs.append("[f=segment:segment_time=\(configuration.segmentSeconds):segment_time_delta=0.033:reset_timestamps=1:strftime=1:segment_format=mp4:segment_format_options=movflags=+faststart:onfail=abort]\(segmentPattern)")
+        }
+        let teeTarget = teeOutputs.joined(separator: "|")
 
         return [
             "-hide_banner", "-loglevel", "warning", "-nostdin",

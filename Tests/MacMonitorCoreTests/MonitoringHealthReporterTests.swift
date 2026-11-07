@@ -35,6 +35,37 @@ final class MonitoringHealthReporterTests: XCTestCase {
         waitForSnapshot(at: status) { $0["state"] as? String == "stopped" && $0["expectingFrames"] as? Bool == false }
     }
 
+    func testSnapshotsReportStandbyAndLiveOnlyCaptureForTheWebPage() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recordings = root.appendingPathComponent("Recordings")
+        let status = root.appendingPathComponent("Runtime/monitoring-status.json")
+        try FileManager.default.createDirectory(at: recordings, withIntermediateDirectories: true)
+        let reporter = MonitoringHealthReporter(statusURL: status, recordingsDirectory: recordings)
+        let info = CaptureRuntimeInfo(deviceName: "Test Camera", logURL: root.appendingPathComponent("capture.log"))
+        reporter.start()
+        reporter.setPauseReason(.remoteStandby)
+        reporter.setRemoteState(captureMode: .off, liveStandby: true)
+        waitForSnapshot(at: status) {
+            $0["state"] as? String == "standby" && $0["expectingFrames"] as? Bool == false &&
+                $0["liveStandby"] as? Bool == true && $0["captureMode"] as? String == "off"
+        }
+
+        reporter.setPauseReason(nil)
+        reporter.setRemoteState(captureMode: .live, liveStandby: true)
+        reporter.updateState(.running(info))
+        waitForSnapshot(at: status) {
+            $0["state"] as? String == "running" && $0["expectingFrames"] as? Bool == true &&
+                $0["captureMode"] as? String == "live" &&
+                ($0["detail"] as? String)?.contains("녹화 안 함") == true
+        }
+
+        let stopped = expectation(description: "health shutdown persisted")
+        reporter.stop { stopped.fulfill() }
+        wait(for: [stopped], timeout: 3)
+        waitForSnapshot(at: status) { $0["liveStandby"] as? Bool == false && $0["captureMode"] as? String == "off" }
+    }
+
     private func waitForSnapshot(at url: URL, matching: @escaping ([String: Any]) -> Bool) {
         let predicate = NSPredicate { _, _ in
             guard let data = try? Data(contentsOf: url),

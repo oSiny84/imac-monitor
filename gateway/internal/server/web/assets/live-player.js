@@ -8,7 +8,7 @@
       this.pc = null; this.resource = null; this.timer = null; this.retry = null; this.abort = null; this.authAbort = null;
       this.previous = null; this.progress = null; this.lastProgress = 0; this.goodTicks = 0; this.ticks = 0;
       this.hasPlayed = false; this.autoplayBlocked = false; this.startedAt = 0;
-      this.suspended = false;
+      this.suspended = false; this.streamWaitStartedAt = 0;
     }
     async start() {
       if (this.closed || this.suspended || this.failures > 4 || this.authAbort) return;
@@ -105,7 +105,9 @@
           return;
         }
         if (response.status === 401) { this.close(); this.status.textContent = "로그인이 만료되었습니다."; return; }
+        if ((response.status === 404 || response.status === 502) && this.waitForStream()) return;
         if (response.status !== 201) throw new Error(`영상 연결 응답 ${response.status}`);
+        this.streamWaitStartedAt = 0;
         const resource = this.sessionURL(response.headers.get("Location"), endpoint);
         if (generation !== this.generation || this.closed) { this.removeSession(resource); return; }
         this.resource = resource;
@@ -125,6 +127,18 @@
       } catch (error) {
         if (!this.closed && generation === this.generation) this.failed(generation, error);
       } finally { clearTimeout(deadline); }
+    }
+    // The camera starts because a viewer asked, so for a few seconds the path has no publisher
+    // (404) or the media server is restarting (502). Neither is a failed connection, so this
+    // spends no retry and does not lower the quality. Bounded so a dead camera still surfaces.
+    waitForStream() {
+      if (!this.streamWaitStartedAt) this.streamWaitStartedAt = Date.now();
+      if (Date.now() - this.streamWaitStartedAt >= 45000) return false;
+      this.generation++; this.clearCurrent();
+      this.status.textContent = "카메라 준비 중…";
+      this.metrics.textContent = "";
+      this.retry = setTimeout(() => this.connect(), 1500);
+      return true;
     }
     failed(generation, error) {
       if (this.closed || generation !== this.generation) return;

@@ -3,7 +3,7 @@
 
   const state = { csrfToken: "", liveLoaded: false, view: "live", mediaReachable: null, statusCheck: 0, recordingsCheck: 0,
     recordingOffset: 0, recordingLimit: 50, recordingRange: {}, recordingsLoading: false, recordingHasMore: false,
-    protectionWrites: new Set() };
+    protectionWrites: new Set(), wakingSince: 0, wakeCheck: null };
   const loginPanel = document.querySelector("#login-panel");
   const app = document.querySelector("#app");
   const connection = document.querySelector("#connection");
@@ -11,6 +11,7 @@
   const loginError = document.querySelector("#login-error");
   const livePlayer = document.querySelector("#live-player");
   const liveUnavailable = document.querySelector("#live-unavailable");
+  const liveWaiting = document.querySelector("#live-waiting");
   const mediaStatus = document.querySelector("#media-status");
   const monitorState = document.querySelector("#monitor-state");
   const monitorDetail = document.querySelector("#monitor-detail");
@@ -52,6 +53,7 @@
     connection.classList.add("online");
     state.mediaReachable = null;
     selectView("live");
+    sendLiveDemand();
     refreshStatus();
   }
 
@@ -61,6 +63,7 @@
     state.recordingsCheck += 1;
     state.mediaReachable = null;
     stopLive();
+    stopWaking();
     liveUnavailable.hidden = true;
     renderHealth(null);
     clearRecordings();
@@ -100,10 +103,43 @@
     document.querySelector("#recordings-view").hidden = view !== "recordings";
     if (view === "recordings") {
       stopLive();
+      stopWaking();
       refreshRecordings();
     } else {
       for (const video of recordingsContainer.querySelectorAll("video")) video.pause();
     }
+  }
+
+  // Renews the lease that keeps the camera on. Only a visible live view asks for video, so
+  // the camera turns off soon after the viewer leaves, closes the tab or backgrounds it.
+  async function sendLiveDemand() {
+    const session = state.csrfToken;
+    if (!session || state.view !== "live" || document.hidden) return;
+    try {
+      await request("/api/live/demand", { method: "POST" });
+    } catch (error) {
+      if (state.csrfToken === session) console.warn("live demand failed", error.message);
+    }
+  }
+
+  function stopWaking() {
+    state.wakingSince = 0;
+    if (state.wakeCheck !== null) clearTimeout(state.wakeCheck);
+    state.wakeCheck = null;
+    liveWaiting.hidden = true;
+  }
+
+  function renderWaking(health) {
+    if (!state.wakingSince) state.wakingSince = Date.now();
+    const message = health.state === "failed" ? "카메라를 켜지 못했습니다 · 자동으로 다시 시도합니다"
+      : Date.now() - state.wakingSince >= 45000 ? "카메라 시작이 늦어지고 있습니다 · Mac과 앱 상태를 확인하세요"
+      : "카메라 켜는 중…";
+    mediaStatus.textContent = message;
+    mediaStatus.classList.remove("online");
+    liveWaiting.textContent = message;
+    liveWaiting.hidden = false;
+    if (state.wakeCheck !== null) clearTimeout(state.wakeCheck);
+    state.wakeCheck = document.hidden ? null : setTimeout(() => { state.wakeCheck = null; refreshStatus(); }, 1500);
   }
 
   async function refreshStatus() {
@@ -117,13 +153,28 @@
       const firstCheck = state.mediaReachable === null;
       const lostLive = state.mediaReachable === true && !status.mediaReachable;
       state.mediaReachable = Boolean(status.mediaReachable);
-      liveUnavailable.hidden = state.mediaReachable;
-      mediaStatus.textContent = status.mediaReachable ? "영상 서버 연결됨" : "실시간 연결 불가 · 저장된 녹화는 이용 가능";
-      mediaStatus.classList.toggle("online", status.mediaReachable);
-      if (status.mediaReachable) {
+      const health = status.monitoring;
+      // With standby on, the app starts the camera because this page asked, so a stopped
+      // media server means "starting", not "unavailable".
+      const canWake = health?.available === true && health.fresh === true && health.liveStandby === true;
+      const cameraReady = !canWake || health.frameState === "receiving";
+      if (state.mediaReachable && (state.liveLoaded || cameraReady)) {
+        stopWaking();
+        liveUnavailable.hidden = true;
+        mediaStatus.textContent = "영상 서버 연결됨";
+        mediaStatus.classList.add("online");
         if (state.view === "live" && !state.liveLoaded) loadLive();
+      } else if (canWake) {
+        if (!state.mediaReachable) stopLive();
+        liveUnavailable.hidden = true;
+        if (state.view === "live") renderWaking(health);
+        else { stopWaking(); mediaStatus.textContent = "실시간 탭을 열면 카메라가 켜집니다"; mediaStatus.classList.remove("online"); }
       } else {
+        stopWaking();
         stopLive();
+        liveUnavailable.hidden = false;
+        mediaStatus.textContent = "실시간 연결 불가 · 저장된 녹화는 이용 가능";
+        mediaStatus.classList.remove("online");
         if (state.view === "live" && (firstCheck || lostLive)) selectView("recordings");
       }
     } catch (error) {
@@ -139,8 +190,8 @@
     const fresh = available && health.fresh === true;
     const receiving = fresh && health.state === "running" && health.frameState === "receiving";
     const labels = {
-      starting: "감시 시작 중", stopped: "감시 중지", stopping: "감시 정리 중",
-      scheduledRest: "예약 휴식 중", sleeping: "시스템 잠자기", recovering: "감시 복구 중", failed: "감시 오류",
+      starting: "카메라 시작 중", stopped: "카메라 꺼짐", stopping: "카메라 정리 중", standby: "원격 대기 중",
+      scheduledRest: "예약 휴식 중", sleeping: "시스템 잠자기", recovering: "카메라 복구 중", failed: "카메라 오류",
     };
     let label = "상태 확인 불가";
     if (available && !fresh) label = "상태 갱신 지연";
@@ -153,6 +204,7 @@
     monitorDetail.textContent = available ? health.detail : "앱의 촬영 상태를 확인하지 못했습니다. 웹 접속 여부만으로 정상 촬영을 판단할 수 없습니다.";
     const fps = fresh && health.expectingFrames && Number.isFinite(health.captureFPS) ? `${health.captureFPS.toFixed(1)} fps` : "—";
     document.querySelector("#capture-fps").textContent = fps;
+    document.querySelector("#recording-mode").textContent = !fresh ? "—" : health.captureMode === "recording" ? "켜짐" : "꺼짐";
     document.querySelector("#last-frame").textContent = formatTime(health?.lastFrameAt);
     document.querySelector("#last-motion").textContent = formatTime(health?.lastMotionAt);
     document.querySelector("#last-recording").textContent = formatTime(health?.lastRecordingAt);
@@ -341,7 +393,7 @@
   document.querySelector("#logout").addEventListener("click", async () => {
     try { await request("/api/logout", { method: "POST" }); } finally { showLogin(); }
   });
-  document.querySelector("#reload-live").addEventListener("click", () => { stopLive(); refreshStatus(); });
+  document.querySelector("#reload-live").addEventListener("click", () => { stopLive(); sendLiveDemand(); refreshStatus(); });
   liveQuality.addEventListener("change", () => {
     try { localStorage.setItem("macmonitor-live-quality", liveQuality.value); } catch { /* Preference remains valid for this page. */ }
     stopLive();
@@ -352,16 +404,15 @@
   for (const tab of document.querySelectorAll(".tab")) {
     tab.addEventListener("click", () => {
       selectView(tab.dataset.view);
-      if (state.view === "live") refreshStatus();
+      if (state.view === "live") { sendLiveDemand(); refreshStatus(); }
     });
   }
 
-  setInterval(() => {
-    if (state.csrfToken && !document.hidden) refreshStatus();
-  }, 5000);
-  document.addEventListener("visibilitychange", () => {
-    if (state.csrfToken && !document.hidden) refreshStatus();
-  });
+  function pollWhileVisible() {
+    if (state.csrfToken && !document.hidden) { sendLiveDemand(); refreshStatus(); }
+  }
+  setInterval(pollWhileVisible, 5000);
+  document.addEventListener("visibilitychange", pollWhileVisible);
 
   request("/api/session").then((session) => {
     if (session.authenticated) showAuthenticated(session); else showLogin();

@@ -5,7 +5,7 @@ import MacMonitorCore
 final class SettingsWindowController: NSWindowController {
     private let cameraPopup = NSPopUpButton()
     private let launchAtLoginCheckbox = NSButton(
-        checkboxWithTitle: "로그인 시 실행 (비밀번호 확인 후 감시)",
+        checkboxWithTitle: "로그인 시 실행 (비밀번호 확인 후 원격 대기)",
         target: nil,
         action: nil
     )
@@ -43,7 +43,7 @@ final class SettingsWindowController: NSWindowController {
 
     private func buildUI() {
         guard let contentView = window?.contentView else { return }
-        let title = NSTextField(labelWithString: "감시 및 네트워크 설정")
+        let title = NSTextField(labelWithString: "원격 시청 및 녹화 설정")
         title.font = .systemFont(ofSize: 20, weight: .semibold)
         for (popup, values) in [(preRollPopup, [0, 5, 15, 30, 60, 120, 300]), (postRollPopup, [5, 15, 30, 60, 120, 300])] {
             for seconds in values {
@@ -76,14 +76,14 @@ final class SettingsWindowController: NSWindowController {
             row("예약 휴식", scheduleCheckbox),
             row("휴식 모드", restModePopup),
             row("휴식 시작 시각", sleepPicker),
-            row("깨우기·감시 재개 시각", wakePicker)
+            row("깨우기·녹화 재개 시각", wakePicker)
         ])
         grid.rowSpacing = 7
         grid.columnSpacing = 12
         grid.column(at: 0).xPlacement = .trailing
         grid.column(at: 1).xPlacement = .fill
 
-        let note = NSTextField(wrappingLabelWithString: "움직임 없는 구간은 임시 버퍼에서 삭제됩니다. 시스템 잠자기는 1분 전 감시를 정리하고, 예약 깨우기 후 화면을 끕니다(잠깐 켜질 수 있음). 화면만 끄기는 시스템을 유지하되 휴식 중 감시는 중단합니다. 두 모드 모두 정해진 시각에 감시를 재개합니다. 앱을 실행·인증한 채 두세요. 키보드·마우스 사용은 우선하며, 로그아웃·재부팅 후에는 재인증이 필요합니다.")
+        let note = NSTextField(wrappingLabelWithString: "원격 시청은 메뉴의 원격 시청 대기로 켜고 끕니다. 움직임 녹화의 임계값·보존·보관 값은 녹화를 켤 때만 쓰입니다. 움직임 없는 구간은 임시 버퍼에서 삭제됩니다. 시스템 잠자기는 1분 전 녹화를 정리하고, 예약 깨우기 후 화면을 끕니다(잠깐 켜질 수 있음). 화면만 끄기는 시스템을 유지하되 휴식 중 녹화는 중단합니다. 두 모드 모두 정해진 시각에 녹화를 재개합니다. 앱을 실행·인증한 채 두세요. 키보드·마우스 사용은 우선하며, 로그아웃·재부팅 후에는 재인증이 필요합니다.")
         note.textColor = .secondaryLabelColor
 
         let saveButton = NSButton(title: "저장", target: self, action: #selector(save))
@@ -152,7 +152,7 @@ final class SettingsWindowController: NSWindowController {
         setMinute(configuration.sleepSchedule.wakeMinute, in: wakePicker)
         statusLabel.stringValue = FileManager.default.fileExists(atPath: AppDirectories.gatewayConfiguration.path)
             ? "HTTPS 게이트웨이 설정 파일이 있습니다."
-            : "HTTPS 게이트웨이는 아직 설정되지 않았습니다. 로컬 녹화는 사용할 수 있습니다."
+            : "HTTPS 게이트웨이가 아직 설정되지 않아 원격 시청을 쓸 수 없습니다. docs/SETUP_MAC.md를 참고하세요. 로컬 녹화는 사용할 수 있습니다."
         do {
             try configuration.motionRegions.validate()
         } catch {
@@ -165,7 +165,7 @@ final class SettingsWindowController: NSWindowController {
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-        let configuration = AppConfiguration(
+        var configuration = AppConfiguration(
             cameraUniqueID: (cameraPopup.selectedItem?.representedObject as? String)
                 .flatMap { $0.isEmpty ? nil : $0 },
             externalWebRTCHosts: hosts,
@@ -186,12 +186,14 @@ final class SettingsWindowController: NSWindowController {
         do {
             try configuration.validate()
             let previous = try AppConfiguration.loadOrCreateForEditing()
+            // The menu owns this choice, and this window may have been open since before it changed.
+            configuration.liveStandby = previous.liveStandby
             guard try PowerScheduleSettings.apply(configuration.sleepSchedule, replacing: previous.sleepSchedule) else { return }
             appliedSystemSchedule = configuration.sleepSchedule.requiresSystemUpdate(replacing: previous.sleepSchedule)
             try configuration.save()
             NotificationCenter.default.post(name: .monitoringSettingsChanged, object: nil)
             try LaunchAtLoginManager.setEnabled(launchAtLoginCheckbox.state == .on)
-            statusLabel.stringValue = "저장했습니다. 감시 설정은 다음 시작, 자동 실행은 다음 로그인부터 적용됩니다."
+            statusLabel.stringValue = "저장했습니다. 카메라·네트워크 설정은 다음 카메라 시작, 자동 실행은 다음 로그인부터 적용됩니다."
         } catch {
             statusLabel.stringValue = (appliedSystemSchedule ? "시스템 전원 예약은 적용되었습니다. 앱 설정 저장 상태를 확인하세요. " : "") + error.localizedDescription
         }

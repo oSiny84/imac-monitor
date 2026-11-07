@@ -11,6 +11,7 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
     private var encoder: FFmpegPipeline?
     private var starting = false
     private var started = false
+    private var recordingEnabled = true
     private let healthReporter: MonitoringHealthReporter?
 
     public init(healthReporter: MonitoringHealthReporter? = nil) {
@@ -20,12 +21,21 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
         }
     }
 
+    /// Applies from the next start, so automatic recovery restarts keep the same mode. Without
+    /// recording there is no motion detection, spool or retention pass, only the live stream.
+    public func setRecordingEnabled(_ enabled: Bool) {
+        stateLock.lock()
+        recordingEnabled = enabled
+        stateLock.unlock()
+    }
+
     public func start() throws {
         stateLock.lock()
         let canStart = !started && !starting
         if canStart {
             starting = true
         }
+        let recordingEnabled = self.recordingEnabled
         stateLock.unlock()
         guard canStart else { return }
         defer {
@@ -47,28 +57,32 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
             ffmpegURL: ffmpegURL
         )
         let reporter = healthReporter
-        let retention = RecordingRetentionManager(
-            spoolDirectory: AppDirectories.spool,
-            recordingsDirectory: AppDirectories.recordings,
-            policy: RetentionPolicy(
-                maximumAge: TimeInterval(configuration.retentionDays) * 86_400,
-                maximumBytes: Int64(configuration.retentionMaxGigabytes * 1_073_741_824),
-                minimumFreeBytes: Int64(configuration.minimumFreeGigabytes * 1_073_741_824),
-                preRoll: TimeInterval(configuration.preRollSeconds),
-                postRoll: TimeInterval(configuration.postRollSeconds)
-            ),
-            eventMerger: FFmpegRecordingEventMerger(executableURL: ffmpegURL, onCompleted: { [weak reporter] url in
-                reporter?.recordRecording(at: url)
-            }),
-            onWarning: { [weak reporter] warning in reporter?.recordRetentionWarning(warning) }
-        )
+        var retention: RecordingRetentionManager?
+        if recordingEnabled {
+            retention = RecordingRetentionManager(
+                spoolDirectory: AppDirectories.spool,
+                recordingsDirectory: AppDirectories.recordings,
+                policy: RetentionPolicy(
+                    maximumAge: TimeInterval(configuration.retentionDays) * 86_400,
+                    maximumBytes: Int64(configuration.retentionMaxGigabytes * 1_073_741_824),
+                    minimumFreeBytes: Int64(configuration.minimumFreeGigabytes * 1_073_741_824),
+                    preRoll: TimeInterval(configuration.preRollSeconds),
+                    postRoll: TimeInterval(configuration.postRollSeconds)
+                ),
+                eventMerger: FFmpegRecordingEventMerger(executableURL: ffmpegURL, onCompleted: { [weak reporter] url in
+                    reporter?.recordRecording(at: url)
+                }),
+                onWarning: { [weak reporter] warning in reporter?.recordRetentionWarning(warning) }
+            )
+        }
         let encoder = FFmpegPipeline(
             configuration: FFmpegPipelineConfiguration(
                 executableURL: ffmpegURL,
                 spoolDirectory: AppDirectories.spool,
                 rtspPublishURL: URL(string: "rtsp://127.0.0.1:8554/live")!,
                 logURL: AppDirectories.diagnostics.appendingPathComponent("ffmpeg.log"),
-                bitrateKbps: configuration.videoBitrateKbps
+                bitrateKbps: configuration.videoBitrateKbps,
+                recordingEnabled: recordingEnabled
             )
         )
         mediaServer.failureHandler = { [weak self] error in
@@ -80,27 +94,30 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
 
         do {
             try mediaServer.start()
-            try retention.start()
+            try retention?.start()
             try encoder.start()
         } catch {
             encoder.stop()
-            retention.stopAndFinalize()
+            retention?.stopAndFinalize()
             mediaServer.stop()
             throw error
         }
 
-        let detector = MotionDetector(
-            configuration: MotionConfiguration(
-                pixelDifferenceThreshold: configuration.motionPixelThreshold,
-                changedPixelFraction: configuration.motionChangedFraction,
-                regions: configuration.motionRegions
+        var detector: MotionDetector?
+        if recordingEnabled {
+            detector = MotionDetector(
+                configuration: MotionConfiguration(
+                    pixelDifferenceThreshold: configuration.motionPixelThreshold,
+                    changedPixelFraction: configuration.motionChangedFraction,
+                    regions: configuration.motionRegions
+                )
             )
-        )
+        }
         stateLock.lock()
         guard starting else {
             stateLock.unlock()
             encoder.stop()
-            retention.stopAndFinalize()
+            retention?.stopAndFinalize()
             mediaServer.stop()
             throw LocalMonitoringPipelineError.startCancelled
         }
@@ -115,18 +132,16 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
 
     public func consume(sampleBuffer: CMSampleBuffer) {
         stateLock.lock()
-        guard started,
-              let detector,
-              let retention,
-              let encoder else {
+        guard started, let encoder else {
             stateLock.unlock()
             return
         }
-        if let observation = detector.analyze(sampleBuffer: sampleBuffer), observation.isMotion {
+        if let detector, let retention,
+           let observation = detector.analyze(sampleBuffer: sampleBuffer), observation.isMotion {
             retention.recordMotion(at: observation.timestamp)
             healthReporter?.recordMotion(at: observation.timestamp)
         }
-        let samplingError = detector.takeSamplingError()
+        let samplingError = detector?.takeSamplingError()
         encoder.consume(sampleBuffer: sampleBuffer)
         stateLock.unlock()
         // Failure handling can stop/restart the pipeline and must run outside its lock.
@@ -172,13 +187,13 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
 }
 
 private struct CaptureFrameStallError: LocalizedError {
-    var errorDescription: String? { "카메라에서 새 프레임이 들어오지 않아 감시를 다시 시작합니다." }
+    var errorDescription: String? { "카메라에서 새 프레임이 들어오지 않아 카메라를 다시 시작합니다." }
 }
 
 public enum LocalMonitoringPipelineError: LocalizedError {
     case startCancelled
 
     public var errorDescription: String? {
-        "감시 파이프라인 시작이 중지 요청으로 취소되었습니다."
+        "카메라 파이프라인 시작이 중지 요청으로 취소되었습니다."
     }
 }

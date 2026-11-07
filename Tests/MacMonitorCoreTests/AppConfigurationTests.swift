@@ -9,6 +9,14 @@ final class AppConfigurationTests: XCTestCase {
         XCTAssertEqual(configuration.preRollSeconds, 5)
         XCTAssertEqual(configuration.postRollSeconds, 15)
         XCTAssertFalse(configuration.sleepSchedule.enabled)
+        XCTAssertTrue(configuration.liveStandby, "remote viewing is the default for existing settings too")
+    }
+
+    func testLiveStandbyChoiceSurvivesRoundTrip() throws {
+        let original = AppConfiguration(liveStandby: false)
+        let decoded = try JSONDecoder().decode(AppConfiguration.self, from: JSONEncoder().encode(original))
+        XCTAssertFalse(decoded.liveStandby)
+        XCTAssertEqual(decoded, original)
     }
 
     func testNewSettingsSurviveRoundTrip() throws {

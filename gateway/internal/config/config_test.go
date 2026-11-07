@@ -43,8 +43,16 @@ func TestLegacyConfigDerivesPrivateStatusPathAndRejectsRelativeOverride(t *testi
 	if loaded.MonitoringStatusFile != filepath.Join(dir, "Runtime", "monitoring-status.json") {
 		t.Fatalf("bad status path: %s", loaded.MonitoringStatusFile)
 	}
+	if loaded.LiveDemandFile != filepath.Join(dir, "Runtime", "live-demand.json") {
+		t.Fatalf("bad live demand path: %s", loaded.LiveDemandFile)
+	}
 	cfg.MonitoringStatusFile = "relative/status.json"
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("relative status path accepted")
+	}
+	cfg.MonitoringStatusFile = ""
+	cfg.LiveDemandFile = "relative/live-demand.json"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("relative live demand path accepted")
 	}
 }

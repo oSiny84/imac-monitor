@@ -21,6 +21,7 @@ type Config struct {
 	MediaMTXURL          string `json:"mediaMTXURL"`
 	RecordingsDirectory  string `json:"recordingsDirectory"`
 	MonitoringStatusFile string `json:"monitoringStatusFile,omitempty"`
+	LiveDemandFile       string `json:"liveDemandFile,omitempty"`
 	PasswordHash         string `json:"passwordHash"`
 	SessionIdleMinutes   int    `json:"sessionIdleMinutes"`
 	SessionMaxHours      int    `json:"sessionMaxHours"`
@@ -47,12 +48,17 @@ func Load(path string) (Config, error) {
 	if cfg.SessionMaxHours == 0 {
 		cfg.SessionMaxHours = 24
 	}
-	if cfg.MonitoringStatusFile == "" {
+	if cfg.MonitoringStatusFile == "" || cfg.LiveDemandFile == "" {
 		directory, err := filepath.Abs(filepath.Dir(path))
 		if err != nil {
 			return Config{}, fmt.Errorf("resolve config directory: %w", err)
 		}
-		cfg.MonitoringStatusFile = filepath.Join(directory, "Runtime", "monitoring-status.json")
+		if cfg.MonitoringStatusFile == "" {
+			cfg.MonitoringStatusFile = filepath.Join(directory, "Runtime", "monitoring-status.json")
+		}
+		if cfg.LiveDemandFile == "" {
+			cfg.LiveDemandFile = filepath.Join(directory, "Runtime", "live-demand.json")
+		}
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -81,6 +87,9 @@ func (c Config) Validate() error {
 	}
 	if c.MonitoringStatusFile != "" && !filepath.IsAbs(c.MonitoringStatusFile) {
 		return errors.New("monitoringStatusFile must be an absolute path")
+	}
+	if c.LiveDemandFile != "" && !filepath.IsAbs(c.LiveDemandFile) {
+		return errors.New("liveDemandFile must be an absolute path")
 	}
 	if !strings.HasPrefix(c.PasswordHash, "pbkdf2_sha256$") {
 		return errors.New("passwordHash is required")

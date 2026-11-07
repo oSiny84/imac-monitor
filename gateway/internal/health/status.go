@@ -25,6 +25,8 @@ type Snapshot struct {
 	WatchdogRecoveries int        `json:"watchdogRecoveries"`
 	LastRecoveryAt     *time.Time `json:"lastRecoveryAt,omitempty"`
 	RetentionWarning   string     `json:"retentionWarning,omitempty"`
+	LiveStandby        bool       `json:"liveStandby"`
+	CaptureMode        string     `json:"captureMode,omitempty"`
 }
 
 type Status struct {
@@ -65,7 +67,12 @@ func Read(path string, now time.Time) Status {
 		return unknown
 	}
 	switch snapshot.State {
-	case "running", "starting", "stopped", "stopping", "recovering", "failed", "scheduledRest", "sleeping":
+	case "running", "starting", "stopped", "stopping", "recovering", "failed", "scheduledRest", "sleeping", "standby":
+	default:
+		return unknown
+	}
+	switch snapshot.CaptureMode {
+	case "", "off", "live", "recording":
 	default:
 		return unknown
 	}

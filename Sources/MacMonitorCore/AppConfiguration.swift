@@ -13,6 +13,8 @@ public struct AppConfiguration: Codable, Equatable {
     public var postRollSeconds: Int
     public var sleepSchedule: DailySleepSchedule
     public var motionRegions: MotionRegions
+    /// Lets an authenticated web viewer turn the camera on. Off refuses remote camera start.
+    public var liveStandby: Bool
 
     public init(
         cameraUniqueID: String? = nil,
@@ -26,7 +28,8 @@ public struct AppConfiguration: Codable, Equatable {
         preRollSeconds: Int = 30,
         postRollSeconds: Int = 30,
         sleepSchedule: DailySleepSchedule = DailySleepSchedule(),
-        motionRegions: MotionRegions = MotionRegions()
+        motionRegions: MotionRegions = MotionRegions(),
+        liveStandby: Bool = true
     ) {
         self.cameraUniqueID = cameraUniqueID
         self.externalWebRTCHosts = externalWebRTCHosts
@@ -40,6 +43,7 @@ public struct AppConfiguration: Codable, Equatable {
         self.postRollSeconds = postRollSeconds
         self.sleepSchedule = sleepSchedule
         self.motionRegions = motionRegions
+        self.liveStandby = liveStandby
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -47,7 +51,7 @@ public struct AppConfiguration: Codable, Equatable {
         case motionPixelThreshold, motionChangedFraction, retentionDays
         case retentionMaxGigabytes, minimumFreeGigabytes
         case preRollSeconds, postRollSeconds, sleepSchedule
-        case motionRegions
+        case motionRegions, liveStandby
     }
 
     public init(from decoder: Decoder) throws {
@@ -65,6 +69,7 @@ public struct AppConfiguration: Codable, Equatable {
         postRollSeconds = try values.decodeIfPresent(Int.self, forKey: .postRollSeconds) ?? 15
         sleepSchedule = try values.decodeIfPresent(DailySleepSchedule.self, forKey: .sleepSchedule) ?? DailySleepSchedule()
         motionRegions = try values.decodeIfPresent(MotionRegions.self, forKey: .motionRegions) ?? MotionRegions()
+        liveStandby = try values.decodeIfPresent(Bool.self, forKey: .liveStandby) ?? true
     }
 
     public static func loadOrCreate() throws -> AppConfiguration {

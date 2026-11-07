@@ -117,6 +117,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/session", s.sessionStatus)
 	mux.Handle("POST /api/logout", s.requireSession(http.HandlerFunc(s.logout)))
 	mux.Handle("GET /api/status", s.requireSession(http.HandlerFunc(s.status)))
+	mux.Handle("POST /api/live/demand", s.requireSession(http.HandlerFunc(s.recordLiveDemand)))
 	mux.Handle("GET /api/recordings", s.requireSession(http.HandlerFunc(s.listRecordings)))
 	mux.Handle("GET /api/recordings/{id}/thumbnail", s.requireSession(http.HandlerFunc(s.serveThumbnail)))
 	mux.Handle("PUT /api/recordings/{id}/protection", s.requireSession(http.HandlerFunc(s.setRecordingProtection)))
@@ -209,7 +210,9 @@ func (s *Server) status(writer http.ResponseWriter, request *http.Request) {
 	probeURL.Path = "/"
 	probeRequest, _ := http.NewRequestWithContext(request.Context(), http.MethodGet, probeURL.String(), nil)
 	response, err := s.httpClient.Do(probeRequest)
-	mediaReachable := err == nil && response != nil && response.StatusCode >= 200 && response.StatusCode < 400
+	// MediaMTX v1.21.1 answers its root with 404 while fully running, so any answer short
+	// of a server error means it is up. Whether a stream exists is learned from WHEP.
+	mediaReachable := err == nil && response != nil && response.StatusCode < 500
 	if response != nil {
 		response.Body.Close()
 	}
@@ -219,6 +222,26 @@ func (s *Server) status(writer http.ResponseWriter, request *http.Request) {
 		"checkedAt":      time.Now().UTC(),
 		"monitoring":     health.Read(s.config.MonitoringStatusFile, time.Now()),
 	})
+}
+
+// recordLiveDemand renews the viewer lease that tells the app to keep the camera on. The app
+// turns the camera off once renewals stop, so a closed tab needs no explicit release.
+func (s *Server) recordLiveDemand(writer http.ResponseWriter, request *http.Request) {
+	_, session, _ := s.requestSession(request)
+	if !csrfMatches(request, session.CSRF) {
+		writeError(writer, http.StatusForbidden, "CSRF 검증에 실패했습니다.")
+		return
+	}
+	if s.config.LiveDemandFile == "" {
+		writeError(writer, http.StatusServiceUnavailable, "실시간 요청 경로가 설정되지 않았습니다.")
+		return
+	}
+	if err := health.RecordLiveDemand(s.config.LiveDemandFile, time.Now()); err != nil {
+		log.Printf("live demand write failed: %v", err)
+		writeError(writer, http.StatusInternalServerError, "실시간 요청을 앱에 전달하지 못했습니다.")
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) listRecordings(writer http.ResponseWriter, request *http.Request) {

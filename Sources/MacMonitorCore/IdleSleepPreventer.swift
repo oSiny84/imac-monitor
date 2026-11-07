@@ -19,7 +19,7 @@ public final class IdleSleepPreventer: IdleSleepPreventing {
     private var assertionID: IOPMAssertionID?
     private let reason: String
 
-    public init(reason: String = "MacMonitor가 감시 중입니다. 디스플레이 절전은 계속 허용됩니다.") {
+    public init(reason: String = "MacMonitor가 카메라를 사용 중입니다. 디스플레이 절전은 계속 허용됩니다.") {
         self.reason = reason
     }
 

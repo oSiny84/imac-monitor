@@ -9,10 +9,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let camera: CameraCaptureService
     private let archiveAccess = ArchiveAccessController()
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-    private let statusMenuItem = NSMenuItem(title: "감시 중지됨", action: nil, keyEquivalent: "")
-    private let archiveMenuItem = NSMenuItem(title: "원격 녹화 — 확인 중", action: nil, keyEquivalent: "")
-    private let startMenuItem = NSMenuItem(title: "감시 시작", action: #selector(startMonitoring), keyEquivalent: "s")
-    private let stopMenuItem = NSMenuItem(title: "감시 중지", action: #selector(stopMonitoring), keyEquivalent: "x")
+    private let statusMenuItem = NSMenuItem(title: "상태 확인 중", action: nil, keyEquivalent: "")
+    private let archiveMenuItem = NSMenuItem(title: "원격 접속 — 확인 중", action: nil, keyEquivalent: "")
+    private let liveStandbyMenuItem = NSMenuItem(title: "원격 시청 대기", action: #selector(toggleLiveStandby), keyEquivalent: "")
+    private let startMenuItem = NSMenuItem(title: "움직임 녹화 시작", action: #selector(startMonitoring), keyEquivalent: "s")
+    private let stopMenuItem = NSMenuItem(title: "움직임 녹화 중지", action: #selector(stopMonitoring), keyEquivalent: "x")
     private var readyToTerminate = false
     private var settingsWindowController: SettingsWindowController?
     private var authenticated = false
@@ -29,6 +30,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Separate from the coordinator: stopping capture must not release this assertion.
     private let displayOnlySleepPreventer = IdleSleepPreventer(reason: "MacMonitor 화면만 끄기 예약: 시스템은 깨어 있고 화면 절전은 허용됩니다.")
     private var reportedPowerError = false
+    private let liveDemand = LiveDemandMonitor()
+    private var liveStandby = true
+    private var liveDemanded = false
+    // The mode the running capture was started with. Stays .off while no capture is requested.
+    private var activeMode: CaptureMode = .off
+    private var lastState: MonitoringState = .idle
+    private var lastFailureUptime: TimeInterval = 0
+    private var archiveState: ArchiveAccessState = .stopped
+    // Separate from the coordinator: waiting for a viewer must keep the Mac reachable with the camera off.
+    private let remoteStandbySleepPreventer = IdleSleepPreventer(reason: "MacMonitor 원격 시청 대기: 시스템은 깨어 있고 화면 절전은 허용됩니다.")
+    private var remoteActivity: NSObjectProtocol?
+    private var reportedStandbyPowerError = false
 
     override init() {
         let healthReporter = MonitoringHealthReporter()
@@ -70,12 +83,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         startMenuItem.target = self
         stopMenuItem.target = self
+        liveStandbyMenuItem.target = self
 
         let menu = NSMenu()
+        // updateStatusPresentation decides which recording item is available.
+        menu.autoenablesItems = false
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
         archiveMenuItem.isEnabled = false
         menu.addItem(archiveMenuItem)
+        menu.addItem(.separator())
+        menu.addItem(liveStandbyMenuItem)
         menu.addItem(.separator())
         menu.addItem(startMenuItem)
         menu.addItem(stopMenuItem)
@@ -122,11 +140,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         center.addObserver(self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(settingsChanged), name: .monitoringSettingsChanged, object: nil)
         do {
-            schedule = try AppConfiguration.loadOrCreate().sleepSchedule
+            let configuration = try AppConfiguration.loadOrCreate()
+            schedule = configuration.sleepSchedule
+            liveStandby = configuration.liveStandby
         } catch {
             AppPasswordPrompt.showError(error.localizedDescription)
         }
-        monitoringWanted = LaunchAtLoginManager.isEnabled || schedule.enabled
+        // With standby on, logging in means "be reachable", not "start recording".
+        monitoringWanted = schedule.enabled || (LaunchAtLoginManager.isEnabled && !liveStandby)
+        liveDemand.onChange = { [weak self] demanded in
+            self?.liveDemanded = demanded
+            self?.reconcileMonitoring()
+        }
+        applyLiveStandby()
         let timer = Timer(timeInterval: 10, repeats: true) { [weak self] _ in self?.evaluateSchedule() }
         RunLoop.main.add(timer, forMode: .common)
         RunLoop.main.add(timer, forMode: .modalPanel)
@@ -140,6 +166,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scheduleTimer?.invalidate()
         displaySleep.cancel()
         displayOnlySleepPreventer.release()
+        liveDemand.stop()
+        remoteStandbySleepPreventer.release()
+        if let activity = remoteActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            remoteActivity = nil
+        }
         healthReporter.setPauseReason(.manualStop)
         let stopped = DispatchGroup()
         stopped.enter()
@@ -158,7 +190,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         archiveAccess.refresh()
         monitoringWanted = true
         // Also allows an explicit retry after the coordinator exhausted recovery attempts.
-        monitoringRequested = false
+        if case .failed = lastState {
+            monitoringRequested = false
+            activeMode = .off
+        }
         evaluateSchedule()
     }
 
@@ -167,14 +202,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         reconcileMonitoring()
     }
 
+    @objc private func toggleLiveStandby() {
+        guard authenticated else { return }
+        do {
+            var configuration = try AppConfiguration.loadOrCreateForEditing()
+            configuration.liveStandby.toggle()
+            try configuration.save()
+            NotificationCenter.default.post(name: .monitoringSettingsChanged, object: nil)
+        } catch { AppPasswordPrompt.showError(error.localizedDescription) }
+    }
+
+    private func applyLiveStandby() {
+        liveStandbyMenuItem.state = liveStandby ? .on : .off
+        if liveStandby && !systemSleeping {
+            liveDemand.start()
+        } else {
+            liveDemand.stop()
+        }
+    }
+
     @objc private func settingsChanged() {
         do {
-            let next = try AppConfiguration.loadOrCreate().sleepSchedule
+            let configuration = try AppConfiguration.loadOrCreate()
+            let next = configuration.sleepSchedule
             if next != schedule {
                 displaySleep.cancel()
                 schedule = next
                 wasRestTime = nil
                 if schedule.enabled { monitoringWanted = true }
+            }
+            if configuration.liveStandby != liveStandby {
+                liveStandby = configuration.liveStandby
+                applyLiveStandby()
             }
             evaluateSchedule()
             archiveAccess.refresh()
@@ -186,6 +245,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sleepStartedAt = Date()
         systemSleeping = true
         archiveAccess.stop()
+        // Uptime stops during sleep, so a lease must not look fresh again after waking.
+        liveDemand.stop()
         reconcileMonitoring()
     }
 
@@ -193,6 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard authenticated, !terminating else { return }
         systemSleeping = false
         archiveAccess.start()
+        applyLiveStandby()
         let now = Date()
         if let start = sleepStartedAt, schedule.crossesResumeTime(from: start, to: now) {
             monitoringWanted = true
@@ -231,30 +293,102 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             monitoringWanted = true
         }
         wasRestTime = resting
+        // Nobody is at the Mac to press retry for a remote viewer, and an exhausted recovery
+        // budget must not make the camera unreachable until someone returns.
+        if case .failed = lastState, activeMode == .live, liveDemanded, monitoringRequested, !stoppingForPower,
+           ProcessInfo.processInfo.systemUptime - lastFailureUptime >= 30 {
+            monitoringRequested = false
+            activeMode = .off
+        }
         reconcileMonitoring()
     }
 
     private func reconcileMonitoring() {
         guard authenticated, !terminating else { return }
         let resting = schedule.isRestTime(at: Date(), preparationMinutes: schedule.preparationMinutes)
-        healthReporter.setPauseReason(systemSleeping ? .systemSleep : resting ? .scheduledRest : monitoringWanted ? nil : .manualStop)
-        let shouldRun = monitoringWanted && !systemSleeping &&
-            !resting
-        if shouldRun {
-            guard !stoppingForPower, !monitoringRequested else { return }
-            monitoringRequested = true
-            coordinator.start()
-        } else if monitoringRequested && !stoppingForPower {
-            stoppingForPower = true
-            coordinator.stop { [weak self] in
-                guard let self else { return }
-                self.monitoringRequested = false
-                self.stoppingForPower = false
-                self.reconcileMonitoring()
+        let desired = CaptureModePolicy.desiredMode(
+            recordingWanted: monitoringWanted,
+            resting: resting,
+            systemSleeping: systemSleeping,
+            liveStandby: liveStandby,
+            liveDemanded: liveDemanded
+        )
+        if systemSleeping {
+            healthReporter.setPauseReason(.systemSleep)
+        } else if desired != .off {
+            healthReporter.setPauseReason(nil)
+        } else if resting {
+            healthReporter.setPauseReason(.scheduledRest)
+        } else {
+            healthReporter.setPauseReason(liveStandby ? .remoteStandby : .manualStop)
+        }
+        if !stoppingForPower {
+            if desired == .off {
+                if monitoringRequested { stopCapture() }
+            } else if !monitoringRequested {
+                activeMode = desired
+                pipeline.setRecordingEnabled(desired == .recording)
+                monitoringRequested = true
+                coordinator.start()
+            } else if activeMode != desired {
+                // Recording and live-only are different encoder outputs, so switching restarts
+                // the capture. The reconcile after the stop starts the new mode, and a viewer's
+                // player reconnects on its own.
+                stopCapture()
             }
         }
-        if schedule.enabled && schedule.isRestTime(at: Date(), preparationMinutes: schedule.preparationMinutes) {
-            statusMenuItem.title = "예약 휴식 중 — \(DailySleepSchedule.timeString(schedule.wakeMinute)) 감시 재개"
+        healthReporter.setRemoteState(captureMode: activeMode, liveStandby: liveStandby)
+        updateRemotePower(resting: resting)
+        updateStatusPresentation()
+    }
+
+    private func stopCapture() {
+        stoppingForPower = true
+        coordinator.stop { [weak self] in
+            guard let self else { return }
+            self.monitoringRequested = false
+            self.stoppingForPower = false
+            self.activeMode = .off
+            self.reconcileMonitoring()
+        }
+    }
+
+    /// A viewer can only reach a Mac that is awake, and only a responsive app can start the camera
+    /// in time. Display sleep stays allowed; a scheduled system sleep is the user's explicit choice.
+    private func updateRemotePower(resting: Bool) {
+        let gatewayExpected: Bool
+        switch archiveState {
+        case .starting, .running, .failed:
+            gatewayExpected = true
+        case .stopped, .notConfigured:
+            gatewayExpected = false
+        }
+        let standing = liveStandby && gatewayExpected && !systemSleeping && !(schedule.usesSystemSchedule && resting)
+        if standing {
+            do {
+                try remoteStandbySleepPreventer.acquire()
+                reportedStandbyPowerError = false
+            } catch {
+                if !reportedStandbyPowerError {
+                    NSLog("MacMonitor: remote standby idle sleep prevention failed: %@", error.localizedDescription)
+                    reportedStandbyPowerError = true
+                }
+            }
+        } else {
+            remoteStandbySleepPreventer.release()
+            reportedStandbyPowerError = false
+        }
+        // A menu bar app with no visible window is otherwise eligible for App Nap, which would
+        // delay the lease poll and the status file the web page reads.
+        let needsPromptTimers = standing || monitoringRequested
+        if needsPromptTimers, remoteActivity == nil {
+            remoteActivity = ProcessInfo.processInfo.beginActivity(
+                options: .userInitiatedAllowingIdleSystemSleep,
+                reason: "MacMonitor 원격 시청 대기"
+            )
+        } else if !needsPromptTimers, let activity = remoteActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            remoteActivity = nil
         }
     }
 
@@ -285,41 +419,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func renderArchiveAccess(_ state: ArchiveAccessState) {
+        archiveState = state
         switch state {
-        case .stopped: archiveMenuItem.title = "원격 녹화 — 중지됨"
-        case .notConfigured: archiveMenuItem.title = "원격 녹화 — HTTPS 설정 필요"
-        case .starting: archiveMenuItem.title = "원격 녹화 — 연결 준비 중"
-        case .running: archiveMenuItem.title = "원격 녹화 — 웹 서버 실행 중"
-        case let .failed(message): archiveMenuItem.title = "원격 녹화 오류 — \(message)"
+        case .stopped: archiveMenuItem.title = "원격 접속 — 중지됨"
+        case .notConfigured: archiveMenuItem.title = "원격 접속 — HTTPS 설정 필요"
+        case .starting: archiveMenuItem.title = "원격 접속 — 연결 준비 중"
+        case .running:
+            archiveMenuItem.title = "원격 접속 — 웹 서버 실행 중"
+            // Ask while the owner is at the Mac. A remote viewer cannot answer the system prompt.
+            if liveStandby { camera.requestAuthorization { _ in } }
+        case let .failed(message): archiveMenuItem.title = "원격 접속 오류 — \(message)"
         }
+        reconcileMonitoring()
     }
 
     private func render(_ state: MonitoringState) {
+        lastState = state
+        if case .failed = state { lastFailureUptime = ProcessInfo.processInfo.systemUptime }
         healthReporter.updateState(state)
-        statusMenuItem.title = state.displayText
+        updateStatusPresentation()
+    }
 
-        switch state {
-        case .idle, .failed:
-            startMenuItem.isEnabled = true
-            stopMenuItem.isEnabled = false
-            statusItem.button?.image = NSImage(
-                systemSymbolName: "video.slash",
-                accessibilityDescription: state.displayText
-            )
+    private func updateStatusPresentation() {
+        var title = lastState.displayText(for: activeMode)
+        var failed = false
+        let symbol: String
+        switch lastState {
+        case .idle:
+            symbol = liveStandby ? "video" : "video.slash"
+            if liveStandby {
+                if case .notConfigured = archiveState {
+                    title = "원격 시청 대기 — HTTPS 설정 필요"
+                } else {
+                    title = "원격 시청 대기 중 — 접속하면 카메라가 켜집니다"
+                }
+            }
         case .running:
-            startMenuItem.isEnabled = false
-            stopMenuItem.isEnabled = true
-            statusItem.button?.image = NSImage(
-                systemSymbolName: "video.fill",
-                accessibilityDescription: state.displayText
-            )
+            symbol = "video.fill"
+        case .failed:
+            symbol = "video.slash"
+            failed = true
         case .requestingCameraPermission, .starting, .recovering, .stopping:
-            startMenuItem.isEnabled = false
-            stopMenuItem.isEnabled = state != .stopping
+            symbol = "video"
         }
-        statusItem.button?.toolTip = state.displayText
-        if schedule.enabled && schedule.isRestTime(at: Date(), preparationMinutes: schedule.preparationMinutes) {
-            statusMenuItem.title = "예약 휴식 중 — \(DailySleepSchedule.timeString(schedule.wakeMinute)) 감시 재개"
+        if activeMode != .live, schedule.enabled,
+           schedule.isRestTime(at: Date(), preparationMinutes: schedule.preparationMinutes) {
+            title = "예약 휴식 중 — \(DailySleepSchedule.timeString(schedule.wakeMinute)) 녹화 재개"
         }
+        statusMenuItem.title = title
+        statusItem.button?.toolTip = title
+        statusItem.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+        startMenuItem.isEnabled = !monitoringWanted || failed
+        stopMenuItem.isEnabled = monitoringWanted
     }
 }

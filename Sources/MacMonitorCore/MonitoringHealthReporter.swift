@@ -4,6 +4,7 @@ public enum MonitoringPauseReason: String {
     case manualStop = "stopped"
     case scheduledRest
     case systemSleep = "sleeping"
+    case remoteStandby = "standby"
 }
 
 struct MonitoringHealthSnapshot: Codable {
@@ -23,6 +24,8 @@ struct MonitoringHealthSnapshot: Codable {
     let watchdogRecoveries: Int
     let lastRecoveryAt: Date?
     let retentionWarning: String?
+    let liveStandby: Bool
+    let captureMode: String
 }
 
 /// A small private, atomically replaced status file is read by the independent
@@ -47,6 +50,8 @@ public final class MonitoringHealthReporter {
     private var stallHandler: (() -> Void)?
     private var reportedWriteError = false // queue-owned
     private var retentionWarning: String?
+    private var liveStandby = false
+    private var captureMode: CaptureMode = .off
 
     public var onStall: (() -> Void)? {
         get { lock.lock(); defer { lock.unlock() }; return stallHandler }
@@ -93,6 +98,15 @@ public final class MonitoringHealthReporter {
         queue.async { [weak self] in self?.tick() }
     }
 
+    public func setRemoteState(captureMode: CaptureMode, liveStandby: Bool) {
+        lock.lock()
+        guard self.captureMode != captureMode || self.liveStandby != liveStandby else { lock.unlock(); return }
+        self.captureMode = captureMode
+        self.liveStandby = liveStandby
+        lock.unlock()
+        queue.async { [weak self] in self?.tick() }
+    }
+
     public func recordFrame(at date: Date = Date(), uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         lock.lock(); defer { lock.unlock() }
         guard enabled else { return }
@@ -127,6 +141,8 @@ public final class MonitoringHealthReporter {
                 self.enabled = false
                 self.pauseReason = .manualStop
                 self.coordinatorState = .idle
+                self.liveStandby = false
+                self.captureMode = .off
                 self.activity.stop()
                 let snapshot = self.snapshot(now: Date(), uptime: ProcessInfo.processInfo.systemUptime)
                 self.lock.unlock()
@@ -168,9 +184,10 @@ public final class MonitoringHealthReporter {
         if let pauseReason {
             state = pauseReason.rawValue
             switch pauseReason {
-            case .manualStop: detail = "수동 감시 중지"
+            case .manualStop: detail = "카메라 꺼짐 · 원격 시청 대기도 꺼져 있습니다"
             case .scheduledRest: detail = "예약 휴식 중"
             case .systemSleep: detail = "시스템 잠자기"
+            case .remoteStandby: detail = "원격 대기 중 · 접속하면 카메라가 켜집니다"
             }
         } else {
             switch coordinatorState {
@@ -181,7 +198,7 @@ public final class MonitoringHealthReporter {
             case .recovering: state = "recovering"
             case .failed: state = "failed"
             }
-            detail = coordinatorState.displayText
+            detail = coordinatorState.displayText(for: captureMode)
         }
         return MonitoringHealthSnapshot(schemaVersion: 1, updatedAt: now,
             state: state, detail: detail, expectingFrames: activity.isActive,
@@ -190,7 +207,7 @@ public final class MonitoringHealthReporter {
             lastMotionAt: lastMotionAt, lastRecordingAt: lastRecordingAt,
             lastRecordingName: lastRecordingName, diskFreeBytes: nil,
             watchdogRecoveries: watchdogRecoveries, lastRecoveryAt: lastRecoveryAt,
-            retentionWarning: retentionWarning)
+            retentionWarning: retentionWarning, liveStandby: liveStandby, captureMode: captureMode.rawValue)
     }
 
     private func write(_ snapshot: MonitoringHealthSnapshot) {

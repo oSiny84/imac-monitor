@@ -359,3 +359,44 @@ test("concurrent startup calls share a single authentication check", async () =>
   assert.equal(f.peers.length, 1);
   assert.equal(f.requests.filter((r) => r.options.method === "POST").length, 1);
 });
+
+for (const code of [404, 502]) {
+  test(`a camera still starting (${code}) spends no retry, keeps quality and connects when the stream appears`, async () => {
+    const { player, api, peers, status, advance, retry, requests } = fixture("auto", { api: { postStatus: code } });
+    player.start();
+    await flush();
+    assert.equal(status.textContent, "카메라 준비 중…");
+    assert.equal(player.failures, 0);
+    assert.equal(player.policy.profile.id, "balanced");
+    for (let attempt = 0; attempt < 6; attempt++) { advance(1500); await retry(); await flush(); }
+    assert.equal(player.failures, 0);
+    assert.equal(player.policy.profile.id, "balanced", "waiting for the camera must not lower quality");
+    assert.ok(peers.slice(0, -1).every((peer) => peer.closed), "each waiting attempt releases its peer");
+    api.postStatus = 201;
+    advance(1500); await retry(); await flush();
+    assert.ok(requests.some((item) => item.options.method === "POST" && item.url.endsWith("/live/live-balanced/whep")));
+    assert.equal(player.streamWaitStartedAt, 0);
+    assert.notEqual(status.textContent, "카메라 준비 중…");
+  });
+}
+
+test("waiting for a camera is bounded and then falls into normal failure handling", async () => {
+  const { player, status, advance, retry } = fixture("original", { api: { postStatus: 404 } });
+  player.start();
+  await flush();
+  advance(46000);
+  await retry();
+  await flush();
+  assert.equal(player.failures, 1);
+  assert.match(status.textContent, /영상 연결 응답 404/);
+});
+
+test("closing while waiting for the camera cancels the pending retry", async () => {
+  const { player, timeouts, peers } = fixture("original", { api: { postStatus: 404 } });
+  player.start();
+  await flush();
+  const before = peers.length;
+  player.close();
+  assert.equal([...timeouts.values()].filter((value) => value.delay === 1500).length, 0);
+  assert.equal(peers.length, before);
+});

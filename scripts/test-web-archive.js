@@ -32,14 +32,14 @@ class Element {
 
 async function flush() { await new Promise(setImmediate); }
 
-async function fixture(mediaOnline) {
+async function fixture(mediaOnline, options = {}) {
   const ids = ["login-panel", "app", "connection", "login-form", "login-error", "live-player",
     "live-unavailable", "media-status", "recordings", "recordings-empty", "recording-template",
     "logout", "reload-live", "refresh-recordings", "live-view", "recordings-view", "monitor-state", "monitor-detail",
     "capture-fps", "last-frame", "last-motion", "last-recording", "disk-free", "watchdog-count",
     "recording-from", "recording-to", "recording-filter", "clear-recording-filter", "recording-results", "recording-timezone",
     "previous-recordings", "next-recordings", "recording-page", "protected-only", "protection-summary",
-    "protection-warning", "protection-message", "retention-warning", "live-quality"];
+    "protection-warning", "protection-message", "retention-warning", "live-quality", "live-waiting", "recording-mode"];
   const elements = Object.fromEntries(ids.map((id) => [id, new Element()]));
   elements["recording-template"].content = { firstElementChild: { cloneNode() {
     const card = new Element();
@@ -51,13 +51,15 @@ async function fixture(mediaOnline) {
     return card;
   } } };
   const tabs = ["live", "recordings"].map((view) => Object.assign(new Element(), { dataset: { view } }));
+  const visibilityListeners = [];
   const document = {
     hidden: false,
     querySelector: (selector) => elements[selector.slice(1)],
     querySelectorAll: () => tabs,
-    addEventListener() {},
+    addEventListener(name, callback) { if (name === "visibilitychange") visibilityListeners.push(callback); },
   };
-  const api = { mediaOnline, blocked: false, release: null, interval: null, monitoring: null,
+  const api = { mediaOnline, blocked: false, release: null, interval: null, monitoring: options.monitoring ?? null,
+    demands: [], failDemand: false, timeout: null, now: 1000,
     confirmUnprotect: true, protectionRequests: [], blockProtection: false, finishProtection: null, failProtection: false,
     recordingRequests: [], blockRecordings: false, pendingRecordings: [], recordings: [
       { id: "example.mp4", startedAt: "2026-10-20T03:00:00Z", sizeBytes: 1024, url: "/recordings/example.mp4",
@@ -68,6 +70,10 @@ async function fixture(mediaOnline) {
   const fetch = async (url, options = {}) => {
     if (url === "/api/session") return response({ authenticated: true, csrfToken: "session-one" });
     if (url === "/api/logout") return response({ authenticated: false });
+    if (url === "/api/live/demand") {
+      api.demands.push(options);
+      return api.failDemand ? response({ error: "demand failed" }, 500) : { ok: true, status: 204, headers: { get: () => "" } };
+    }
     if (url.startsWith("/api/recordings?")) {
       api.recordingRequests.push(url);
       const query = new URL(url, "https://camera.example").searchParams;
@@ -99,9 +105,13 @@ async function fixture(mediaOnline) {
     }
     throw new Error(`unexpected request ${url}`);
   };
-  const context = vm.createContext({ document, fetch, Headers, Intl, Date, URLSearchParams,
+  const context = vm.createContext({ document, fetch, Headers, Intl, URLSearchParams,
+    Date: class extends Date { static now() { return api.now; } },
+    console: { warn() {} },
     confirm: () => api.confirmUnprotect,
     setInterval: (callback) => { api.interval = callback; },
+    setTimeout: (callback) => { api.timeout = callback; return 1; },
+    clearTimeout: () => { api.timeout = null; },
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../gateway/internal/server/web/assets/app.js"), "utf8"), context);
   await flush();
@@ -109,6 +119,7 @@ async function fixture(mediaOnline) {
     elements, api,
     tick: async () => { api.interval(); await flush(); },
     tab: async (view) => { tabs.find((tab) => tab.dataset.view === view).listeners.click(); await flush(); },
+    visibility: async (hidden) => { document.hidden = hidden; for (const listener of visibilityListeners) listener(); await flush(); },
   };
 }
 
@@ -394,4 +405,91 @@ test("quality choices reconnect only the live view and cannot load media after l
   elements["live-quality"].listeners.change();
   await flush();
   assert.equal(elements["live-player"].src, undefined);
+});
+
+const standby = (overrides = {}) => ({ available: true, fresh: true, liveStandby: true, state: "standby", frameState: "inactive",
+  expectingFrames: false, detail: "원격 대기", captureMode: "off", ...overrides });
+
+test("with standby on, login stays on live, asks for the camera with CSRF and waits instead of opening recordings", async () => {
+  const { elements, api } = await fixture(false, { monitoring: standby() });
+  assert.equal(elements["live-view"].hidden, false);
+  assert.equal(elements["recordings-view"].hidden, true);
+  assert.equal(elements["live-unavailable"].hidden, true);
+  assert.equal(elements["live-player"].src, undefined);
+  assert.equal(elements["live-waiting"].hidden, false);
+  assert.match(elements["live-waiting"].textContent, /카메라 켜는 중/);
+  assert.equal(api.demands.length, 1);
+  assert.equal(api.demands[0].method, "POST");
+  assert.equal(api.demands[0].headers.get("X-CSRF-Token"), "session-one");
+  assert.equal(elements["recording-mode"].textContent, "꺼짐");
+});
+
+test("video loads only once real frames arrive, then polling keeps it through a brief status change", async () => {
+  const { elements, api, tick } = await fixture(false, { monitoring: standby() });
+  api.mediaOnline = true;
+  api.monitoring = standby({ state: "starting" });
+  await tick();
+  assert.equal(elements["live-player"].src, undefined, "the media server alone does not mean the camera is publishing");
+  api.monitoring = standby({ state: "running", frameState: "receiving", expectingFrames: true, captureMode: "live", captureFPS: 15 });
+  await tick();
+  assert.match(elements["live-player"].src, /^\/assets\/live\.html\?quality=/);
+  assert.equal(elements["live-waiting"].hidden, true);
+  assert.equal(elements["monitor-state"].textContent, "새 프레임 수신 중");
+  const loaded = elements["live-player"].src;
+  api.monitoring = standby({ state: "running", frameState: "stalled", expectingFrames: true, captureMode: "live" });
+  await tick();
+  assert.equal(elements["live-player"].src, loaded, "a playing stream must not be torn down by one stale status");
+});
+
+test("while the camera starts the page rechecks quickly, and a dead camera is reported instead of waiting silently", async () => {
+  const { elements, api, tick } = await fixture(false, { monitoring: standby() });
+  assert.equal(typeof api.timeout, "function");
+  api.now += 46000;
+  await tick();
+  assert.match(elements["live-waiting"].textContent, /늦어지고/);
+  api.monitoring = standby({ state: "failed", detail: "카메라 권한이 필요합니다." });
+  await tick();
+  assert.match(elements["live-waiting"].textContent, /켜지 못했습니다/);
+  assert.equal(elements["monitor-detail"].textContent, "카메라 권한이 필요합니다.");
+});
+
+test("only a visible live view renews the camera lease", async () => {
+  const { api, tick, tab, visibility, elements } = await fixture(false, { monitoring: standby() });
+  assert.equal(api.demands.length, 1);
+  await tick();
+  assert.equal(api.demands.length, 2);
+  await tab("recordings");
+  assert.equal(elements["live-waiting"].hidden, true);
+  await tick();
+  assert.equal(api.demands.length, 2, "the recordings tab must let the camera turn off");
+  await tab("live");
+  assert.equal(api.demands.length, 3);
+  await visibility(true);
+  await tick();
+  assert.equal(api.demands.length, 3, "a background tab must let the camera turn off");
+  await visibility(false);
+  assert.equal(api.demands.length, 4, "returning to the page asks for the camera again");
+  await elements.logout.listeners.click();
+  await flush();
+  await tick();
+  assert.equal(api.demands.length, 4, "logout must stop renewing");
+});
+
+test("a failed demand does not break the page, and standby off keeps the old archive fallback", async () => {
+  const { elements, api, tick } = await fixture(false, { monitoring: standby() });
+  api.failDemand = true;
+  await tick();
+  assert.equal(elements.app.hidden, false);
+  assert.equal(elements["live-waiting"].hidden, false);
+  const off = await fixture(false, { monitoring: standby({ liveStandby: false, state: "stopped" }) });
+  assert.equal(off.elements["recordings-view"].hidden, false);
+  assert.equal(off.elements["live-unavailable"].hidden, false);
+  assert.equal(off.elements["live-waiting"].hidden, true);
+});
+
+test("stale app status is not trusted to wake the camera", async () => {
+  const { elements } = await fixture(false, { monitoring: standby({ fresh: false }) });
+  assert.equal(elements["recordings-view"].hidden, false);
+  assert.equal(elements["live-waiting"].hidden, true);
+  assert.equal(elements["recording-mode"].textContent, "—");
 });
