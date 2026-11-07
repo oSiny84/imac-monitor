@@ -1,7 +1,9 @@
 """Create a source-only Mac test ZIP, preserving Unix executable permissions.
 
 Run on Windows with Python 3. No credentials, build output or downloaded tools
-are included. Shell scripts are normalized to LF inside the archive only.
+are included. Every packaged file is text and is written with LF line endings
+inside the archive only, so a Windows checkout with autocrlf packages the same
+bytes the repository holds.
 """
 from datetime import datetime
 from pathlib import Path
@@ -35,9 +37,7 @@ def main():
         for path in sorted(files):
             name = "MacMonitor/" + path.relative_to(root).as_posix()
             executable = path.suffix in (".sh", ".command")
-            data = path.read_bytes()
-            if executable:
-                data = data.replace(b"\r\n", b"\n")
+            data = path.read_bytes().replace(b"\r\n", b"\n")
             info = zipfile.ZipInfo(name, datetime.now().timetuple()[:6])
             info.create_system = 3  # Unix: Finder restores executable bits.
             info.external_attr = (stat.S_IFREG | (0o755 if executable else 0o644)) << 16
@@ -49,11 +49,11 @@ def main():
         assert set(archive.namelist()) == set(expected)
         for info in archive.infolist():
             assert hashlib.sha256(archive.read(info)).digest() == expected[info.filename]
+            assert b"\r" not in archive.read(info)
             if info.filename.endswith((".command", ".sh")):
                 assert info.create_system == 3
                 assert (info.external_attr >> 16) & 0o777 == 0o755
-                assert b"\r" not in archive.read(info)
-    print(f"Verified {len(expected)} files, LF shell scripts, and executable permissions")
+    print(f"Verified {len(expected)} files, LF line endings, and executable permissions")
     print(f"ZIP: {output}")
     print(f"Bytes: {output.stat().st_size}")
     print(f"SHA256: {hashlib.sha256(output.read_bytes()).hexdigest()}")
