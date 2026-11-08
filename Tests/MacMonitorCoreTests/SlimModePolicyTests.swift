@@ -39,18 +39,12 @@ final class SlimModePolicyTests: XCTestCase {
         XCTAssertEqual(decide(idle: 600), .sleepNow)
     }
 
-    func testNextWakeIsThePeriodicCheckOrTheRecordingWindowWhicheverComesFirst() {
-        let schedule = RecordingSchedule(enabled: true)
+    func testNextWakeIsThePeriodicCheckAndNeverLessThanAMinuteAhead() {
         let monday8 = at(day: 9, 8)
-        XCTAssertEqual(policy.nextWake(after: monday8, interval: 600, recordingSchedule: schedule, calendar: calendar), at(day: 9, 8, 10))
-        XCTAssertEqual(policy.nextWake(after: monday8, interval: 3600, recordingSchedule: schedule, calendar: calendar), at(day: 9, 8, 59),
-                       "the recording window starts before the next periodic check")
-        XCTAssertEqual(policy.nextWake(after: monday8, interval: nil, recordingSchedule: schedule, calendar: calendar), at(day: 9, 8, 59),
-                       "without slim mode only the recording window wakes the Mac")
-        XCTAssertEqual(policy.nextWake(after: at(day: 9, 8, 59, 30), interval: nil, recordingSchedule: schedule, calendar: calendar), at(day: 9, 9, 0, 30),
+        XCTAssertEqual(policy.nextWake(after: monday8, interval: 600), at(day: 9, 8, 10))
+        XCTAssertEqual(policy.nextWake(after: monday8, interval: 30), at(day: 9, 8, 1),
                        "a wake is never asked for less than a minute ahead")
-        XCTAssertEqual(policy.nextWake(after: monday8, interval: 30, recordingSchedule: RecordingSchedule(), calendar: calendar), at(day: 9, 8, 1))
-        XCTAssertNil(policy.nextWake(after: monday8, interval: nil, recordingSchedule: RecordingSchedule(), calendar: calendar))
+        XCTAssertNil(policy.nextWake(after: monday8, interval: nil), "without slim mode nothing wakes the Mac")
     }
 
     func testSleepIsDetectedFromTheClockGap() {

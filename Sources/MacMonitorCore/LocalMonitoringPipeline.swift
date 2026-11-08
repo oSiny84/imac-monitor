@@ -22,7 +22,7 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
     }
 
     /// Applies from the next start, so automatic recovery restarts keep the same mode. Live has
-    /// no detection, spool or retention pass; motion recording has all three; scheduled recording
+    /// no detection, spool or retention pass; motion recording has all three; timed recording
     /// keeps every clip and skips detection.
     public func setCaptureMode(_ mode: CaptureMode) {
         stateLock.lock()
@@ -79,7 +79,7 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
                 }),
                 onWarning: { [weak reporter] warning in reporter?.recordRetentionWarning(warning) }
             )
-        case .scheduled:
+        case .timed:
             // Every closed clip is kept, under the same size, age and free-space limits.
             retention = RecordingRetentionManager(
                 spoolDirectory: AppDirectories.spool,
@@ -90,7 +90,7 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
                     minimumFreeBytes: minimumFreeBytes,
                     preRoll: 0,
                     postRoll: 0,
-                    segmentDuration: configuration.recordingSchedule.segmentDuration,
+                    segmentDuration: RecordingDemand.clipDuration,
                     keepEverySegment: true
                 ),
                 onWarning: { [weak reporter] warning in reporter?.recordRetentionWarning(warning) },
@@ -106,8 +106,8 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
                 rtspPublishURL: URL(string: "rtsp://127.0.0.1:8554/live")!,
                 logURL: AppDirectories.diagnostics.appendingPathComponent("ffmpeg.log"),
                 bitrateKbps: configuration.videoBitrateKbps,
-                segmentSeconds: mode == .scheduled ? configuration.recordingSchedule.segmentMinutes * 60 : 5,
-                segmentFilePrefix: mode == .scheduled ? "schedule" : "segment",
+                segmentSeconds: mode == .timed ? Int(RecordingDemand.clipDuration) : 5,
+                segmentFilePrefix: mode == .timed ? "remote" : "segment",
                 recordingEnabled: mode.writesRecordings
             )
         )

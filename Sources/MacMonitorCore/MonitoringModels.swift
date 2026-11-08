@@ -12,26 +12,27 @@ public struct CaptureRuntimeInfo: Equatable {
 }
 
 /// What the camera is running for. Remote viewing needs only the live stream; motion recording
-/// adds detection and the spool on top of the same capture; scheduled recording keeps every
-/// clip of a weekly time window and skips detection.
+/// adds detection and the spool on top of the same capture; timed recording, started from the
+/// web for a number of hours, keeps every clip until its end time and skips detection.
 public enum CaptureMode: String, Equatable {
     case off
     case live
     case recording
-    case scheduled
+    case timed
 
     /// Both recording modes write files and therefore need the spool and the retention pass.
-    public var writesRecordings: Bool { self == .recording || self == .scheduled }
+    public var writesRecordings: Bool { self == .recording || self == .timed }
 }
 
 public enum CaptureModePolicy {
     /// Recording wins while wanted because its stream also serves viewers, so one capture covers
-    /// both. The weekly schedule wins over manual motion recording because its clips are
-    /// continuous. A scheduled rest pauses recording but not a viewer who explicitly asked for
-    /// video.
+    /// both. A timed recording wins over manual motion recording because its clips are
+    /// continuous; like remote viewing it needs standby on, the owner's switch for "remote may
+    /// use the camera". A scheduled rest pauses recording but not a viewer who explicitly asked
+    /// for video.
     public static func desiredMode(
         recordingWanted: Bool,
-        scheduledRecording: Bool = false,
+        timedRecording: Bool = false,
         resting: Bool,
         systemSleeping: Bool,
         liveStandby: Bool,
@@ -39,7 +40,7 @@ public enum CaptureModePolicy {
     ) -> CaptureMode {
         if systemSleeping { return .off }
         if !resting {
-            if scheduledRecording { return .scheduled }
+            if timedRecording && liveStandby { return .timed }
             if recordingWanted { return .recording }
         }
         if liveStandby && liveDemanded { return .live }
@@ -99,10 +100,10 @@ extension MonitoringState {
             return "원격 시청 준비 중 — 카메라를 켜는 중"
         case let (.live, .running(info)):
             return "원격 시청 중 — \(info.deviceName) · 녹화 안 함"
-        case (.scheduled, .requestingCameraPermission), (.scheduled, .starting):
-            return "예약 녹화 준비 중 — 카메라를 켜는 중"
-        case let (.scheduled, .running(info)):
-            return "예약 녹화 중 — \(info.deviceName)"
+        case (.timed, .requestingCameraPermission), (.timed, .starting):
+            return "원격 녹화 준비 중 — 카메라를 켜는 중"
+        case let (.timed, .running(info)):
+            return "원격 녹화 중 — \(info.deviceName)"
         default:
             return displayText
         }

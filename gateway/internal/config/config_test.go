@@ -46,6 +46,9 @@ func TestLegacyConfigDerivesPrivateStatusPathAndRejectsRelativeOverride(t *testi
 	if loaded.LiveDemandFile != filepath.Join(dir, "Runtime", "live-demand.json") {
 		t.Fatalf("bad live demand path: %s", loaded.LiveDemandFile)
 	}
+	if loaded.RecordingDemandFile != filepath.Join(dir, "Runtime", "recording-demand.json") {
+		t.Fatalf("bad recording demand path: %s", loaded.RecordingDemandFile)
+	}
 	if loaded.TelegramFile != filepath.Join(dir, "telegram.json") {
 		t.Fatalf("bad telegram path: %s", loaded.TelegramFile)
 	}
@@ -58,6 +61,12 @@ func TestLegacyConfigDerivesPrivateStatusPathAndRejectsRelativeOverride(t *testi
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("relative live demand path accepted")
 	}
+	cfg.LiveDemandFile = ""
+	cfg.RecordingDemandFile = "relative/recording-demand.json"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("relative recording demand path accepted")
+	}
+	cfg.RecordingDemandFile = ""
 	cfg.LiveDemandFile = ""
 	cfg.TelegramFile = "relative/telegram.json"
 	if err := cfg.Validate(); err == nil {

@@ -73,7 +73,7 @@ func Read(path string, now time.Time) Status {
 		return unknown
 	}
 	switch snapshot.CaptureMode {
-	case "", "off", "live", "recording", "scheduled":
+	case "", "off", "live", "recording", "timed":
 	default:
 		return unknown
 	}

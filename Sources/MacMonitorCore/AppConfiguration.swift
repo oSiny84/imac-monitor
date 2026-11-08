@@ -13,10 +13,9 @@ public struct AppConfiguration: Codable, Equatable {
     public var postRollSeconds: Int
     public var sleepSchedule: DailySleepSchedule
     public var motionRegions: MotionRegions
-    /// Lets an authenticated web viewer turn the camera on. Off refuses remote camera start.
+    /// Lets an authenticated web viewer turn the camera on or start a timed recording. Off
+    /// refuses both.
     public var liveStandby: Bool
-    /// Weekly windows of continuous recording; the retention limits above bound their size.
-    public var recordingSchedule: RecordingSchedule
     /// Lets the Mac sleep between remote requests and wake on a timer to check for them.
     public var slimMode: SlimModeSettings
 
@@ -33,7 +32,6 @@ public struct AppConfiguration: Codable, Equatable {
         postRollSeconds: Int = 30,
         sleepSchedule: DailySleepSchedule = DailySleepSchedule(),
         motionRegions: MotionRegions = MotionRegions(),
-        recordingSchedule: RecordingSchedule = RecordingSchedule(),
         slimMode: SlimModeSettings = SlimModeSettings(),
         liveStandby: Bool = true
     ) {
@@ -49,7 +47,6 @@ public struct AppConfiguration: Codable, Equatable {
         self.postRollSeconds = postRollSeconds
         self.sleepSchedule = sleepSchedule
         self.motionRegions = motionRegions
-        self.recordingSchedule = recordingSchedule
         self.slimMode = slimMode
         self.liveStandby = liveStandby
     }
@@ -59,7 +56,9 @@ public struct AppConfiguration: Codable, Equatable {
         case motionPixelThreshold, motionChangedFraction, retentionDays
         case retentionMaxGigabytes, minimumFreeGigabytes
         case preRollSeconds, postRollSeconds, sleepSchedule
-        case motionRegions, liveStandby, recordingSchedule, slimMode
+        // A settings file written by the 2026-11-08 build may still carry a recordingSchedule
+        // key; keyed decoding ignores keys that are not listed here.
+        case motionRegions, liveStandby, slimMode
     }
 
     public init(from decoder: Decoder) throws {
@@ -78,7 +77,6 @@ public struct AppConfiguration: Codable, Equatable {
         sleepSchedule = try values.decodeIfPresent(DailySleepSchedule.self, forKey: .sleepSchedule) ?? DailySleepSchedule()
         motionRegions = try values.decodeIfPresent(MotionRegions.self, forKey: .motionRegions) ?? MotionRegions()
         liveStandby = try values.decodeIfPresent(Bool.self, forKey: .liveStandby) ?? true
-        recordingSchedule = try values.decodeIfPresent(RecordingSchedule.self, forKey: .recordingSchedule) ?? RecordingSchedule()
         slimMode = try values.decodeIfPresent(SlimModeSettings.self, forKey: .slimMode) ?? SlimModeSettings()
     }
 
@@ -129,7 +127,6 @@ public struct AppConfiguration: Codable, Equatable {
         }
         try sleepSchedule.validate()
         try motionRegions.validate()
-        try recordingSchedule.validate()
         try slimMode.validate()
         guard (250...10_000).contains(videoBitrateKbps) else {
             throw AppConfigurationError.invalid("videoBitrateKbps")

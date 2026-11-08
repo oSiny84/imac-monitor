@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -118,6 +119,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/logout", s.requireSession(http.HandlerFunc(s.logout)))
 	mux.Handle("GET /api/status", s.requireSession(http.HandlerFunc(s.status)))
 	mux.Handle("POST /api/live/demand", s.requireSession(http.HandlerFunc(s.recordLiveDemand)))
+	mux.Handle("POST /api/recording/start", s.requireSession(http.HandlerFunc(s.startRecording)))
+	mux.Handle("POST /api/recording/stop", s.requireSession(http.HandlerFunc(s.stopRecording)))
 	mux.Handle("GET /api/recordings", s.requireSession(http.HandlerFunc(s.listRecordings)))
 	mux.Handle("GET /api/recordings/{id}/thumbnail", s.requireSession(http.HandlerFunc(s.serveThumbnail)))
 	mux.Handle("PUT /api/recordings/{id}/protection", s.requireSession(http.HandlerFunc(s.setRecordingProtection)))
@@ -221,6 +224,7 @@ func (s *Server) status(writer http.ResponseWriter, request *http.Request) {
 		"mediaReachable": mediaReachable,
 		"checkedAt":      time.Now().UTC(),
 		"monitoring":     health.Read(s.config.MonitoringStatusFile, time.Now()),
+		"recording":      health.ReadRecordingDemand(s.config.RecordingDemandFile, time.Now()),
 	})
 }
 
@@ -241,6 +245,57 @@ func (s *Server) recordLiveDemand(writer http.ResponseWriter, request *http.Requ
 		writeError(writer, http.StatusInternalServerError, "실시간 요청을 앱에 전달하지 못했습니다.")
 		return
 	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+// startRecording writes the request the app records against until its end time. Unlike the
+// viewer lease it is never renewed: the owner asked for a number of hours and may close the
+// page, so the camera stays on without them.
+func (s *Server) startRecording(writer http.ResponseWriter, request *http.Request) {
+	_, session, _ := s.requestSession(request)
+	if !csrfMatches(request, session.CSRF) {
+		writeError(writer, http.StatusForbidden, "CSRF 검증에 실패했습니다.")
+		return
+	}
+	if s.config.RecordingDemandFile == "" {
+		writeError(writer, http.StatusServiceUnavailable, "녹화 요청 경로가 설정되지 않았습니다.")
+		return
+	}
+	var body struct {
+		Hours int `json:"hours"`
+	}
+	if err := json.NewDecoder(io.LimitReader(request.Body, 1024)).Decode(&body); err != nil ||
+		body.Hours < 1 || body.Hours > health.MaxRecordingHours {
+		writeError(writer, http.StatusBadRequest, fmt.Sprintf("녹화 시간은 1~%d시간이어야 합니다.", health.MaxRecordingHours))
+		return
+	}
+	demand, err := health.WriteRecordingDemand(s.config.RecordingDemandFile, time.Now(), body.Hours)
+	if err != nil {
+		log.Printf("recording demand write failed: %v", err)
+		writeError(writer, http.StatusInternalServerError, "녹화 요청을 앱에 전달하지 못했습니다.")
+		return
+	}
+	log.Printf("remote recording requested for %d hours until %s", demand.Hours, demand.Until.Format(time.RFC3339))
+	writeJSON(writer, http.StatusOK, demand)
+}
+
+// stopRecording ends the request early. The app notices the missing file within seconds.
+func (s *Server) stopRecording(writer http.ResponseWriter, request *http.Request) {
+	_, session, _ := s.requestSession(request)
+	if !csrfMatches(request, session.CSRF) {
+		writeError(writer, http.StatusForbidden, "CSRF 검증에 실패했습니다.")
+		return
+	}
+	if s.config.RecordingDemandFile == "" {
+		writeError(writer, http.StatusServiceUnavailable, "녹화 요청 경로가 설정되지 않았습니다.")
+		return
+	}
+	if err := health.ClearRecordingDemand(s.config.RecordingDemandFile); err != nil {
+		log.Printf("recording demand clear failed: %v", err)
+		writeError(writer, http.StatusInternalServerError, "녹화 요청을 지우지 못했습니다.")
+		return
+	}
+	log.Printf("remote recording stopped")
 	writer.WriteHeader(http.StatusNoContent)
 }
 

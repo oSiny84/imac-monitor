@@ -39,7 +39,8 @@ async function fixture(mediaOnline, options = {}) {
     "capture-fps", "last-frame", "last-motion", "last-recording", "disk-free", "watchdog-count",
     "recording-from", "recording-to", "recording-filter", "clear-recording-filter", "recording-results", "recording-timezone",
     "previous-recordings", "next-recordings", "recording-page", "protected-only", "protection-summary",
-    "protection-warning", "protection-message", "retention-warning", "live-quality", "live-waiting", "recording-mode"];
+    "protection-warning", "protection-message", "retention-warning", "live-quality", "live-waiting", "recording-mode",
+    "record-hours", "record-start", "record-stop", "record-state"];
   const elements = Object.fromEntries(ids.map((id) => [id, new Element()]));
   elements["recording-template"].content = { firstElementChild: { cloneNode() {
     const card = new Element();
@@ -60,6 +61,7 @@ async function fixture(mediaOnline, options = {}) {
   };
   const api = { mediaOnline, blocked: false, release: null, interval: null, monitoring: options.monitoring ?? null,
     demands: [], failDemand: false, timeout: null, now: 1000,
+    recording: null, recordingUntil: "2026-11-08T13:00:00Z", recordingStarts: [], recordingStops: [], failRecording: false,
     confirmUnprotect: true, protectionRequests: [], blockProtection: false, finishProtection: null, failProtection: false,
     recordingRequests: [], blockRecordings: false, pendingRecordings: [], recordings: [
       { id: "example.mp4", startedAt: "2026-10-20T03:00:00Z", sizeBytes: 1024, url: "/recordings/example.mp4",
@@ -73,6 +75,17 @@ async function fixture(mediaOnline, options = {}) {
     if (url === "/api/live/demand") {
       api.demands.push(options);
       return api.failDemand ? response({ error: "demand failed" }, 500) : { ok: true, status: 204, headers: { get: () => "" } };
+    }
+    if (url === "/api/recording/start") {
+      api.recordingStarts.push(options);
+      if (api.failRecording) return response({ error: "녹화 시간은 1~24시간이어야 합니다." }, 400);
+      api.recording = { until: api.recordingUntil, hours: JSON.parse(options.body).hours, requestedAt: "2026-11-08T09:00:00Z" };
+      return response(api.recording);
+    }
+    if (url === "/api/recording/stop") {
+      api.recordingStops.push(options);
+      api.recording = null;
+      return { ok: true, status: 204, headers: { get: () => "" } };
     }
     if (url.startsWith("/api/recordings?")) {
       api.recordingRequests.push(url);
@@ -100,8 +113,8 @@ async function fixture(mediaOnline, options = {}) {
       return finish();
     }
     if (url === "/api/status") {
-      if (api.blocked) return new Promise((resolve) => { api.release = () => resolve(response({ mediaReachable: api.mediaOnline, monitoring: api.monitoring })); });
-      return response({ mediaReachable: api.mediaOnline, monitoring: api.monitoring });
+      if (api.blocked) return new Promise((resolve) => { api.release = () => resolve(response({ mediaReachable: api.mediaOnline, monitoring: api.monitoring, recording: api.recording })); });
+      return response({ mediaReachable: api.mediaOnline, monitoring: api.monitoring, recording: api.recording });
     }
     throw new Error(`unexpected request ${url}`);
   };
@@ -441,19 +454,79 @@ test("video loads only once real frames arrive, then polling keeps it through a 
   assert.equal(elements["live-player"].src, loaded, "a playing stream must not be torn down by one stale status");
 });
 
-test("the recording cell tells scheduled recording from motion recording", async () => {
+test("the recording cell tells remote recording from motion recording", async () => {
   const { elements, api, tick } = await fixture(false, { monitoring: standby() });
   api.mediaOnline = true;
   const running = (captureMode) => standby({ state: "running", frameState: "receiving", expectingFrames: true, captureMode, captureFPS: 15 });
-  api.monitoring = running("scheduled");
+  api.monitoring = running("timed");
   await tick();
-  assert.equal(elements["recording-mode"].textContent, "켜짐 · 예약");
+  assert.equal(elements["recording-mode"].textContent, "켜짐 · 원격");
   api.monitoring = running("recording");
   await tick();
   assert.equal(elements["recording-mode"].textContent, "켜짐 · 움직임");
   api.monitoring = running("live");
   await tick();
   assert.equal(elements["recording-mode"].textContent, "꺼짐");
+});
+
+test("remote recording starts for the chosen hours, shows the remaining time from the app's view, and stops on demand", async () => {
+  const { elements, api, tick } = await fixture(false, { monitoring: standby() });
+  api.now = Date.UTC(2026, 10, 8, 9, 0, 0);
+  assert.equal(elements["record-start"].hidden, false);
+  assert.equal(elements["record-stop"].hidden, true);
+  assert.equal(elements["record-state"].textContent, "");
+  elements["record-hours"].value = "4";
+  await elements["record-start"].listeners.click();
+  await flush();
+  assert.equal(api.recordingStarts.length, 1);
+  assert.equal(api.recordingStarts[0].method, "POST");
+  assert.equal(JSON.parse(api.recordingStarts[0].body).hours, 4);
+  assert.equal(api.recordingStarts[0].headers.get("X-CSRF-Token"), "session-one");
+  assert.equal(elements["record-start"].hidden, true, "one request at a time");
+  assert.equal(elements["record-stop"].hidden, false);
+  assert.match(elements["record-state"].textContent, /^녹화 요청됨/, "the app has not confirmed yet");
+  assert.match(elements["record-state"].textContent, /남은 4시간/);
+  // The app confirms through its status file; this page is no longer needed for the recording.
+  api.mediaOnline = true;
+  api.monitoring = standby({ state: "running", frameState: "receiving", expectingFrames: true, captureMode: "timed", captureFPS: 15 });
+  api.now += 10 * 60 * 1000;
+  await tick();
+  assert.match(elements["record-state"].textContent, /^원격 녹화 중/);
+  assert.match(elements["record-state"].textContent, /남은 3시간 50분/);
+  assert.equal(elements["recording-mode"].textContent, "켜짐 · 원격");
+  await elements["record-stop"].listeners.click();
+  await flush();
+  assert.equal(api.recordingStops.length, 1);
+  assert.equal(api.recordingStops[0].headers.get("X-CSRF-Token"), "session-one");
+  assert.equal(elements["record-start"].hidden, false);
+  assert.equal(elements["record-stop"].hidden, true);
+  assert.equal(elements["record-state"].textContent, "");
+});
+
+test("a recording already running is shown after a fresh login, and a rejected request keeps the button usable", async () => {
+  const { elements, api } = await fixture(false, { monitoring: standby({ state: "running", frameState: "receiving", expectingFrames: true, captureMode: "timed" }) });
+  // fixture() fetches the status before this test can set api.recording, so log in again.
+  api.recording = { until: "2026-11-08T13:00:00Z", hours: 4, requestedAt: "2026-11-08T09:00:00Z" };
+  api.now = Date.UTC(2026, 10, 8, 12, 30, 0);
+  api.mediaOnline = true;
+  elements["reload-live"].listeners.click();
+  await flush();
+  assert.equal(elements["record-stop"].hidden, false, "another device started it; this page must be able to stop it");
+  assert.match(elements["record-state"].textContent, /^원격 녹화 중.*남은 30분/);
+
+  const fresh = await fixture(false, { monitoring: standby() });
+  fresh.api.failRecording = true;
+  fresh.elements["record-hours"].value = "4";
+  await fresh.elements["record-start"].listeners.click();
+  await flush();
+  assert.equal(fresh.elements["record-start"].hidden, false);
+  assert.equal(fresh.elements["record-start"].disabled, false);
+  assert.match(fresh.elements["record-state"].textContent, /녹화 시작 실패 · 녹화 시간은 1~24시간이어야 합니다\./);
+  fresh.elements["record-hours"].value = "";
+  await fresh.elements["record-start"].listeners.click();
+  await flush();
+  assert.equal(fresh.api.recordingStarts.length, 1, "an empty choice is refused before any request");
+  assert.match(fresh.elements["record-state"].textContent, /시간을 고르세요/);
 });
 
 test("while the camera starts the page rechecks quickly, and a dead camera is reported instead of waiting silently", async () => {

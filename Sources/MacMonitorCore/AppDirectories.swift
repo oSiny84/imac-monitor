@@ -14,6 +14,7 @@ public enum AppDirectories {
     public static let gatewayConfiguration = root.appendingPathComponent("gateway.json")
     public static let monitoringStatus = runtime.appendingPathComponent("monitoring-status.json")
     public static let liveDemand = runtime.appendingPathComponent("live-demand.json")
+    public static let recordingDemand = runtime.appendingPathComponent("recording-demand.json")
 
     public static func prepare() throws {
         for directory in [root, diagnostics, spool, recordings, runtime] {

@@ -33,7 +33,7 @@ public struct SlimModePolicy {
     /// After launch or a wake the Mac stays up this long so the gateway can come back and the
     /// chat bot can fetch a pending request.
     public var checkWindow: TimeInterval = 60
-    /// After a viewer leaves or a recording window closes, the Mac stays up this long.
+    /// After a viewer leaves or a recording ends, the Mac stays up this long.
     public var graceAfterCapture: TimeInterval = 60
     /// Someone typing or moving the mouse within this time is treated as present.
     public var idleBeforeSleep: TimeInterval = 600
@@ -83,20 +83,12 @@ public struct SlimModePolicy {
         return .sleepNow
     }
 
-    /// When to wake next: the periodic check, or a minute before the next recording window if
-    /// that comes first. Nil when neither applies. Never earlier than a minute from now, because
-    /// pmset wants a future time and the Mac is about to sleep.
-    public func nextWake(after now: Date, interval: TimeInterval?, recordingSchedule: RecordingSchedule,
-                         calendar: Calendar = .current) -> Date? {
-        let floor = now.addingTimeInterval(60)
-        var candidates: [Date] = []
-        if let interval {
-            candidates.append(max(floor, now.addingTimeInterval(interval)))
-        }
-        if let start = recordingSchedule.nextStart(after: now, calendar: calendar) {
-            candidates.append(max(floor, start.addingTimeInterval(-60)))
-        }
-        return candidates.min()
+    /// When to wake next for the periodic check, or nil without slim mode. Never earlier than a
+    /// minute from now, because pmset wants a future time and the Mac is about to sleep. A
+    /// remote recording never needs a wake: it keeps the Mac up until it ends.
+    public func nextWake(after now: Date, interval: TimeInterval?) -> Date? {
+        guard let interval else { return nil }
+        return now.addingTimeInterval(max(60, interval))
     }
 
     /// Scheduled wakes may arrive as dark wakes without a wake notification. Uptime pauses

@@ -17,11 +17,11 @@ final class FFmpegPipelineTests: XCTestCase {
         return try XCTUnwrap(pipeline.arguments().last)
     }
 
-    func testScheduledRecordingWritesLongClipsUnderTheScheduleName() throws {
-        let target = try teeTarget(recordingEnabled: true, segmentSeconds: 600, prefix: "schedule")
+    func testRemoteRecordingWritesLongClipsUnderTheRemoteName() throws {
+        let target = try teeTarget(recordingEnabled: true, segmentSeconds: 600, prefix: "remote")
         XCTAssertTrue(target.contains("segment_time=600:"))
-        XCTAssertTrue(target.contains("/tmp/spool/schedule-"))
-        XCTAssertFalse(target.contains("segment-"), "scheduled clips must not look like motion spool segments")
+        XCTAssertTrue(target.contains("/tmp/spool/remote-"))
+        XCTAssertFalse(target.contains("segment-"), "remote clips must not look like motion spool segments")
     }
 
     func testLiveOnlyPublishesTheStreamAndWritesNothingToTheSpool() throws {

@@ -10,17 +10,14 @@ final class AppConfigurationTests: XCTestCase {
         XCTAssertEqual(configuration.postRollSeconds, 15)
         XCTAssertFalse(configuration.sleepSchedule.enabled)
         XCTAssertTrue(configuration.liveStandby, "remote viewing is the default for existing settings too")
-        XCTAssertFalse(configuration.recordingSchedule.enabled, "older settings never recorded on a schedule")
     }
 
-    func testRecordingScheduleSurvivesRoundTripAndIsValidated() throws {
-        let original = AppConfiguration(recordingSchedule: RecordingSchedule(enabled: true, weekdays: [6, 2, 2],
-            startMinute: 22 * 60, endMinute: 2 * 60, segmentMinutes: 30))
-        let decoded = try JSONDecoder().decode(AppConfiguration.self, from: JSONEncoder().encode(original))
-        XCTAssertEqual(decoded, original)
-        XCTAssertEqual(decoded.recordingSchedule.weekdays, [2, 6], "weekdays are stored sorted and unique")
-        try decoded.validate()
-        XCTAssertThrowsError(try AppConfiguration(recordingSchedule: RecordingSchedule(enabled: true, weekdays: [])).validate())
+    func testASettingsFileFromTheScheduledRecordingBuildStillLoads() throws {
+        // The 2026-11-08 build wrote a weekly recording schedule; the key is ignored, not an error.
+        let json = #"{"externalWebRTCHosts":[],"videoBitrateKbps":1200,"motionPixelThreshold":18,"motionChangedFraction":0.025,"retentionDays":14,"retentionMaxGigabytes":20,"minimumFreeGigabytes":5,"recordingSchedule":{"enabled":true,"weekdays":[2,3],"startMinute":540,"endMinute":1080,"segmentMinutes":10}}"#
+        let configuration = try JSONDecoder().decode(AppConfiguration.self, from: Data(json.utf8))
+        try configuration.validate()
+        XCTAssertEqual(configuration, try JSONDecoder().decode(AppConfiguration.self, from: JSONEncoder().encode(configuration)))
     }
 
     func testSlimModeDefaultsOffAndValidatesTheWakeInterval() throws {

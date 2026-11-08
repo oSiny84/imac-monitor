@@ -271,8 +271,8 @@ func describe(status health.Status) string {
 	switch status.CaptureMode {
 	case "recording":
 		label += " · 움직임 녹화"
-	case "scheduled":
-		label += " · 예약 녹화"
+	case "timed":
+		label += " · 원격 녹화"
 	case "live":
 		label += " · 실시간만"
 	}

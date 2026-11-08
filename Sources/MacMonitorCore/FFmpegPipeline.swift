@@ -13,7 +13,7 @@ public struct FFmpegPipelineConfiguration {
     public let framesPerSecond: Int
     public let bitrateKbps: Int
     public let segmentSeconds: Int
-    /// Stem of the clip files: motion spool segments and scheduled clips must stay distinguishable.
+    /// Stem of the clip files: motion spool segments and remote clips must stay distinguishable.
     public let segmentFilePrefix: String
     /// False publishes the live stream only and writes nothing to the spool.
     public let recordingEnabled: Bool

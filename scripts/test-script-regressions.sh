@@ -423,7 +423,7 @@ fi
 echo 'PASS: telegram setup rejects a malformed token before contacting Telegram'
 
 export TEST_TELEGRAM_UPDATES=none
-if run_telegram "$TELEGRAM_TOKEN" > /dev/null 2>&1; then
+if run_telegram "$TELEGRAM_TOKEN" > "$FIXTURE/telegram-nochat.txt" 2>&1; then
     echo 'FAIL: telegram setup saved a configuration without any chat'
     exit 1
 fi
@@ -431,7 +431,14 @@ fi
     echo 'FAIL: telegram setup wrote telegram.json without a chat id'
     exit 1
 }
-echo 'PASS: telegram setup refuses to guess a chat'
+# A silent exit left the owner guessing on 2026-11-08: set -e stopped the script at the empty
+# grep before the explanation was printed.
+grep -q '봇에 도착한 메시지가 없습니다' "$FIXTURE/telegram-nochat.txt" || {
+    echo 'FAIL: telegram setup exited without explaining that no message reached the bot'
+    cat "$FIXTURE/telegram-nochat.txt"
+    exit 1
+}
+echo 'PASS: telegram setup refuses to guess a chat and says why'
 
 export TEST_TELEGRAM_UPDATES=one
 : > "$TELEGRAM_LOG"

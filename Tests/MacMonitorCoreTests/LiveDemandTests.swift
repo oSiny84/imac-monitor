@@ -87,9 +87,9 @@ final class LiveDemandTests: XCTestCase {
     }
 
     func testRecordingWinsAndServesViewersWhileLiveNeedsStandbyAndAViewer() {
-        func mode(recording: Bool = false, scheduled: Bool = false, resting: Bool = false, sleeping: Bool = false,
+        func mode(recording: Bool = false, timed: Bool = false, resting: Bool = false, sleeping: Bool = false,
                   standby: Bool = true, viewer: Bool = false) -> CaptureMode {
-            CaptureModePolicy.desiredMode(recordingWanted: recording, scheduledRecording: scheduled, resting: resting,
+            CaptureModePolicy.desiredMode(recordingWanted: recording, timedRecording: timed, resting: resting,
                 systemSleeping: sleeping, liveStandby: standby, liveDemanded: viewer)
         }
         XCTAssertEqual(mode(), .off, "no viewer means the camera stays off")
@@ -100,21 +100,23 @@ final class LiveDemandTests: XCTestCase {
         XCTAssertEqual(mode(recording: true, resting: true), .off)
         XCTAssertEqual(mode(recording: true, resting: true, viewer: true), .live, "rest pauses recording, not an explicit viewer")
         XCTAssertEqual(mode(recording: true, sleeping: true, viewer: true), .off)
-        XCTAssertEqual(mode(scheduled: true), .scheduled)
-        XCTAssertEqual(mode(recording: true, scheduled: true), .scheduled, "continuous clips win over motion recording")
-        XCTAssertEqual(mode(scheduled: true, viewer: true), .scheduled, "one capture serves the viewer too")
-        XCTAssertEqual(mode(scheduled: true, resting: true), .off, "the daily rest pauses scheduled recording like motion recording")
-        XCTAssertEqual(mode(scheduled: true, resting: true, viewer: true), .live)
-        XCTAssertEqual(mode(scheduled: true, sleeping: true), .off)
+        XCTAssertEqual(mode(timed: true), .timed)
+        XCTAssertEqual(mode(recording: true, timed: true), .timed, "continuous clips win over motion recording")
+        XCTAssertEqual(mode(timed: true, viewer: true), .timed, "one capture serves the viewer too")
+        XCTAssertEqual(mode(timed: true, resting: true), .off, "the daily rest pauses remote recording like motion recording")
+        XCTAssertEqual(mode(timed: true, resting: true, viewer: true), .live)
+        XCTAssertEqual(mode(timed: true, sleeping: true), .off)
+        XCTAssertEqual(mode(timed: true, standby: false), .off, "standby off refuses remote recording like remote viewing")
+        XCTAssertEqual(mode(recording: true, timed: true, standby: false), .recording)
     }
 
     func testLiveOnlyStatusSaysNothingIsBeingRecorded() {
         let info = CaptureRuntimeInfo(deviceName: "Test Camera", logURL: URL(fileURLWithPath: "/tmp/capture.log"))
         XCTAssertEqual(MonitoringState.running(info).displayText(for: .recording), "움직임 녹화 중 — Test Camera")
         XCTAssertEqual(MonitoringState.running(info).displayText(for: .live), "원격 시청 중 — Test Camera · 녹화 안 함")
-        XCTAssertEqual(MonitoringState.running(info).displayText(for: .scheduled), "예약 녹화 중 — Test Camera")
-        XCTAssertEqual(MonitoringState.starting.displayText(for: .scheduled), "예약 녹화 준비 중 — 카메라를 켜는 중")
-        XCTAssertTrue(CaptureMode.scheduled.writesRecordings)
+        XCTAssertEqual(MonitoringState.running(info).displayText(for: .timed), "원격 녹화 중 — Test Camera")
+        XCTAssertEqual(MonitoringState.starting.displayText(for: .timed), "원격 녹화 준비 중 — 카메라를 켜는 중")
+        XCTAssertTrue(CaptureMode.timed.writesRecordings)
         XCTAssertFalse(CaptureMode.live.writesRecordings)
         XCTAssertEqual(MonitoringState.idle.displayText(for: .live), MonitoringState.idle.displayText)
     }

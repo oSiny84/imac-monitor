@@ -165,7 +165,7 @@ func (s *Store) Search(query Query) (Page, error) {
 
 func recordingTime(name string, fallback fs.FileInfo) time.Time {
 	trimmed := strings.TrimSuffix(name, ".mp4")
-	for _, prefix := range []string{"motion-", "segment-", "schedule-"} {
+	for _, prefix := range []string{"motion-", "segment-", "remote-", "schedule-"} {
 		if strings.HasPrefix(trimmed, prefix) {
 			value := strings.TrimPrefix(trimmed, prefix)
 			if separator := strings.IndexByte(value, '-'); separator > 0 {

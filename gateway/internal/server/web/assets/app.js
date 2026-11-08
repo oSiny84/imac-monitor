@@ -3,7 +3,7 @@
 
   const state = { csrfToken: "", liveLoaded: false, view: "live", mediaReachable: null, statusCheck: 0, recordingsCheck: 0,
     recordingOffset: 0, recordingLimit: 50, recordingRange: {}, recordingsLoading: false, recordingHasMore: false,
-    protectionWrites: new Set(), wakingSince: 0, wakeCheck: null };
+    protectionWrites: new Set(), wakingSince: 0, wakeCheck: null, recordingError: false };
   const loginPanel = document.querySelector("#login-panel");
   const app = document.querySelector("#app");
   const connection = document.querySelector("#connection");
@@ -26,6 +26,10 @@
   const protectedOnly = document.querySelector("#protected-only");
   const protectionMessage = document.querySelector("#protection-message");
   const liveQuality = document.querySelector("#live-quality");
+  const recordHours = document.querySelector("#record-hours");
+  const recordStart = document.querySelector("#record-start");
+  const recordStop = document.querySelector("#record-stop");
+  const recordState = document.querySelector("#record-state");
   try { const saved = localStorage.getItem("macmonitor-live-quality"); if (["auto", "original", "balanced", "low"].includes(saved)) liveQuality.value = saved; } catch { /* Private browsing may disable storage. */ }
   document.querySelector("#recording-timezone").textContent = `날짜·시각 기준: 접속 기기 (${Intl.DateTimeFormat().resolvedOptions().timeZone}). 녹화 시작 시각으로 검색합니다.`;
 
@@ -154,6 +158,7 @@
       const status = await request("/api/status");
       if (state.csrfToken !== session || check !== state.statusCheck) return;
       renderHealth(status.monitoring);
+      renderRecording(status.recording, status.monitoring);
       const firstCheck = state.mediaReachable === null;
       const lostLive = state.mediaReachable === true && !status.mediaReachable;
       state.mediaReachable = Boolean(status.mediaReachable);
@@ -209,7 +214,7 @@
     const fps = fresh && health.expectingFrames && Number.isFinite(health.captureFPS) ? `${health.captureFPS.toFixed(1)} fps` : "—";
     document.querySelector("#capture-fps").textContent = fps;
     document.querySelector("#recording-mode").textContent = !fresh ? "—"
-      : health.captureMode === "recording" ? "켜짐 · 움직임" : health.captureMode === "scheduled" ? "켜짐 · 예약" : "꺼짐";
+      : health.captureMode === "recording" ? "켜짐 · 움직임" : health.captureMode === "timed" ? "켜짐 · 원격" : "꺼짐";
     document.querySelector("#last-frame").textContent = formatTime(health?.lastFrameAt);
     document.querySelector("#last-motion").textContent = formatTime(health?.lastMotionAt);
     document.querySelector("#last-recording").textContent = formatTime(health?.lastRecordingAt);
@@ -218,6 +223,34 @@
     const retentionWarning = document.querySelector("#retention-warning");
     retentionWarning.hidden = !available || !health.retentionWarning;
     retentionWarning.textContent = available && health.retentionWarning ? `${fresh ? "최근 보관 점검: " : "마지막 보고된 경고 (갱신 지연): "}${health.retentionWarning}` : "";
+  }
+
+  // The request lives in the gateway's file, not in this page: the owner may close the tab or
+  // open another device, and the status answer is what every page agrees on.
+  function renderRecording(recording, health) {
+    const until = typeof recording?.until === "string" ? new Date(recording.until) : null;
+    const active = until !== null && Number.isFinite(until.getTime());
+    recordStart.hidden = active;
+    recordStop.hidden = !active;
+    recordHours.disabled = active;
+    if (!active) {
+      if (!state.recordingError) recordState.textContent = "";
+      state.recordingError = false;
+      return;
+    }
+    state.recordingError = false;
+    const fresh = health?.available === true && health.fresh === true;
+    const recordingNow = fresh && health.state === "running" && health.captureMode === "timed";
+    const label = recordingNow ? "원격 녹화 중" : fresh ? "녹화 요청됨 · 카메라 준비 중" : "녹화 요청됨 · 앱 상태 확인 불가";
+    const untilText = new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" }).format(until);
+    recordState.textContent = `${label} · ${untilText}까지 · 남은 ${formatRemaining(until.getTime() - Date.now())}`;
+  }
+
+  function formatRemaining(milliseconds) {
+    const minutes = Math.max(0, Math.ceil(milliseconds / 60000));
+    const hours = Math.floor(minutes / 60);
+    if (hours === 0) return `${minutes}분`;
+    return minutes % 60 === 0 ? `${hours}시간` : `${hours}시간 ${minutes % 60}분`;
   }
 
   function formatTime(value) {
@@ -399,6 +432,39 @@
     try { await request("/api/logout", { method: "POST" }); } finally { showLogin(); }
   });
   document.querySelector("#reload-live").addEventListener("click", () => { stopLive(); sendLiveDemand(); refreshStatus(); });
+  recordStart.addEventListener("click", async () => {
+    const hours = Number(recordHours.value);
+    if (!Number.isInteger(hours) || hours < 1 || hours > 24) {
+      state.recordingError = true;
+      recordState.textContent = "녹화 시간을 고르세요 (1~24시간)";
+      return;
+    }
+    recordStart.disabled = true;
+    try {
+      const recording = await request("/api/recording/start", { method: "POST", body: JSON.stringify({ hours }) });
+      renderRecording(recording, null);
+      // Recording restarts the capture, so the player reconnects on its own after a short gap.
+      refreshStatus();
+    } catch (error) {
+      state.recordingError = true;
+      recordState.textContent = `녹화 시작 실패 · ${error.message}`;
+    } finally {
+      recordStart.disabled = false;
+    }
+  });
+  recordStop.addEventListener("click", async () => {
+    recordStop.disabled = true;
+    try {
+      await request("/api/recording/stop", { method: "POST" });
+      renderRecording(null, null);
+      refreshStatus();
+    } catch (error) {
+      state.recordingError = true;
+      recordState.textContent = `녹화 중지 실패 · ${error.message}`;
+    } finally {
+      recordStop.disabled = false;
+    }
+  });
   liveQuality.addEventListener("change", () => {
     try { localStorage.setItem("macmonitor-live-quality", liveQuality.value); } catch { /* Preference remains valid for this page. */ }
     stopLive();

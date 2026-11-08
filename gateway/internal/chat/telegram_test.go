@@ -353,8 +353,8 @@ func TestASilentAppIsReportedAfterTheStartupTimeout(t *testing.T) {
 func TestStatusAndHelpReplies(t *testing.T) {
 	h := newHarness(t)
 	h.writeStatus(t, func(s *health.Snapshot) {
-		s.CaptureMode = "scheduled"
-		s.Detail = "예약 녹화 중 — Test Camera"
+		s.CaptureMode = "timed"
+		s.Detail = "원격 녹화 중 — Test Camera"
 		free := int64(123_400_000_000)
 		s.DiskFreeBytes = &free
 	})
@@ -367,7 +367,7 @@ func TestStatusAndHelpReplies(t *testing.T) {
 	if len(texts) != 2 {
 		t.Fatalf("unexpected replies: %v", texts)
 	}
-	for _, expected := range []string{"상태: 카메라 켜짐 · 예약 녹화", "예약 녹화 중 — Test Camera", "디스크 여유 123.4GB"} {
+	for _, expected := range []string{"상태: 카메라 켜짐 · 원격 녹화", "원격 녹화 중 — Test Camera", "디스크 여유 123.4GB"} {
 		if !strings.Contains(texts[0], expected) {
 			t.Fatalf("status reply %q lacks %q", texts[0], expected)
 		}

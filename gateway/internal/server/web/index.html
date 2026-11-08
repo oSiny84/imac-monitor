@@ -48,7 +48,15 @@
           <span id="media-status" class="status-dot">영상 서버 확인 중</span>
           <button id="reload-live" class="secondary" type="button">영상 다시 연결</button>
         </div>
-        <p class="archive-hint">이 화면을 보는 동안 카메라가 켜지고 Mac의 초록 표시등이 들어옵니다. 화면을 닫으면 약 20초 뒤 꺼집니다. 움직임 녹화를 켜 둔 동안에는 계속 켜져 있습니다.</p>
+        <div class="record-controls" aria-label="원격 녹화">
+          <label for="record-hours">원격 녹화</label>
+          <select id="record-hours"><option value="1">1시간</option><option value="2" selected>2시간</option><option value="3">3시간</option><option value="4">4시간</option><option value="6">6시간</option><option value="8">8시간</option><option value="12">12시간</option><option value="24">24시간</option></select>
+          <button id="record-start" type="button">녹화 시작</button>
+          <button id="record-stop" class="secondary" type="button" hidden>녹화 중지</button>
+          <span id="record-state" class="archive-hint" role="status" aria-live="polite"></span>
+        </div>
+        <p class="archive-hint">녹화 시작을 누르면 이 화면을 닫아도 고른 시간까지 10분 단위 파일로 계속 저장합니다. 시작할 때 영상이 잠시 끊기고 다시 연결됩니다. 최대 녹화 용량을 넘으면 오래된 파일부터 지워집니다.</p>
+        <p class="archive-hint">이 화면을 보는 동안 카메라가 켜지고 Mac의 초록 표시등이 들어옵니다. 화면을 닫으면 약 20초 뒤 꺼집니다. 원격 녹화나 움직임 녹화 중에는 계속 켜져 있습니다.</p>
       </section>
 
       <section id="recordings-view" class="view" hidden>
@@ -73,7 +81,7 @@
         <p id="protection-message" class="archive-hint" role="status" aria-live="polite"></p>
         <p id="recording-results" class="archive-hint" role="status" aria-live="polite"></p>
         <div id="recordings" class="recordings"></div>
-        <p id="recordings-empty" class="empty" hidden>저장된 움직임 녹화가 없습니다.</p>
+        <p id="recordings-empty" class="empty" hidden>저장된 녹화가 없습니다.</p>
         <nav class="recording-pages" aria-label="녹화 페이지">
           <button id="previous-recordings" class="secondary" type="button" disabled>이전</button>
           <span id="recording-page"></span>
@@ -86,7 +94,7 @@
         <p id="monitor-detail" class="monitor-detail"></p>
         <p id="retention-warning" class="archive-notice" role="status" hidden></p>
         <dl class="monitoring-grid">
-          <div><dt>움직임 녹화</dt><dd id="recording-mode">—</dd></div>
+          <div><dt>녹화</dt><dd id="recording-mode">—</dd></div>
           <div><dt>실제 수신 FPS</dt><dd id="capture-fps">—</dd></div>
           <div><dt>마지막 프레임</dt><dd id="last-frame">—</dd></div>
           <div><dt>마지막 움직임</dt><dd id="last-motion">—</dd></div>

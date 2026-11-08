@@ -11,6 +11,10 @@ button, input, select { font: inherit; }
 .quality-controls { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem; margin-bottom: .75rem; }
 .quality-controls label { margin: 0; }
 .quality-controls select { padding: .5rem; border-radius: .5rem; border: 1px solid #ffffff25; background: #121713; color: #eef3ef; }
+.record-controls { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem; margin: .25rem 0 .75rem; }
+.record-controls label { margin: 0; font-weight: 600; }
+.record-controls select { padding: .5rem; border-radius: .5rem; border: 1px solid #ffffff25; background: #121713; color: #eef3ef; }
+.record-controls button { width: auto; margin-top: 0; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .4; }
 .shell { width: min(100%, 74rem); margin: 0 auto; padding: max(1.25rem, env(safe-area-inset-top)) 1rem 3rem; }

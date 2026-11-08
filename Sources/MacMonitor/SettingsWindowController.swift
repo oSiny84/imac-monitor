@@ -22,15 +22,6 @@ final class SettingsWindowController: NSWindowController {
     private let restModePopup = NSPopUpButton()
     private let sleepPicker = NSDatePicker()
     private let wakePicker = NSDatePicker()
-    private let recordingScheduleCheckbox = NSButton(checkboxWithTitle: "예약 녹화 사용 (감지 없이 연속 저장)", target: nil, action: nil)
-    private let weekdayButtons: [NSButton] = (1...7).map { (weekday: Int) -> NSButton in
-        let button = NSButton(checkboxWithTitle: RecordingSchedule.weekdayName(weekday), target: nil, action: nil)
-        button.tag = weekday
-        return button
-    }
-    private let recordingStartPicker = NSDatePicker()
-    private let recordingEndPicker = NSDatePicker()
-    private let clipLengthPopup = NSPopUpButton()
     private let slimModeCheckbox = NSButton(checkboxWithTitle: "슬림 모드 (대기 중 Mac 잠자기 허용, 주기적으로 깨어나 확인)", target: nil, action: nil)
     private let wakeIntervalPopup = NSPopUpButton()
     private let statusLabel = NSTextField(labelWithString: "")
@@ -40,7 +31,7 @@ final class SettingsWindowController: NSWindowController {
 
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 960),
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 840),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -62,7 +53,7 @@ final class SettingsWindowController: NSWindowController {
                 popup.lastItem?.tag = seconds
             }
         }
-        for picker in [sleepPicker, wakePicker, recordingStartPicker, recordingEndPicker] {
+        for picker in [sleepPicker, wakePicker] {
             picker.datePickerStyle = .textFieldAndStepper
             picker.datePickerElements = .hourMinute
         }
@@ -70,18 +61,10 @@ final class SettingsWindowController: NSWindowController {
         restModePopup.lastItem?.representedObject = ScheduledRestMode.systemSleep.rawValue
         restModePopup.addItem(withTitle: "시스템 유지 · 화면만 끄기")
         restModePopup.lastItem?.representedObject = ScheduledRestMode.displayOnly.rawValue
-        for minutes in [5, 10, 30] {
-            clipLengthPopup.addItem(withTitle: "\(minutes)분")
-            clipLengthPopup.lastItem?.tag = minutes
-        }
         for minutes in [5, 10, 15, 30, 60] {
             wakeIntervalPopup.addItem(withTitle: "\(minutes)분마다")
             wakeIntervalPopup.lastItem?.tag = minutes
         }
-        let weekdayRow = NSStackView(views: weekdayButtons)
-        weekdayRow.orientation = .horizontal
-        weekdayRow.spacing = 6
-
         let grid = NSGridView(views: [
             row("카메라", cameraPopup),
             row("앱 실행", launchAtLoginCheckbox),
@@ -99,11 +82,6 @@ final class SettingsWindowController: NSWindowController {
             row("휴식 모드", restModePopup),
             row("휴식 시작 시각", sleepPicker),
             row("깨우기·녹화 재개 시각", wakePicker),
-            row("예약 녹화", recordingScheduleCheckbox),
-            row("녹화 요일", weekdayRow),
-            row("녹화 시작 시각", recordingStartPicker),
-            row("녹화 종료 시각", recordingEndPicker),
-            row("녹화 파일 길이", clipLengthPopup),
             row("슬림 모드", slimModeCheckbox),
             row("깨어나 확인 간격", wakeIntervalPopup)
         ])
@@ -112,7 +90,7 @@ final class SettingsWindowController: NSWindowController {
         grid.column(at: 0).xPlacement = .trailing
         grid.column(at: 1).xPlacement = .fill
 
-        let note = NSTextField(wrappingLabelWithString: "원격 시청은 메뉴의 원격 시청 대기로 켜고 끕니다. 예약 녹화는 선택한 요일의 시작~종료 시각에 움직임과 상관없이 연속으로 저장하며, 종료가 시작보다 이르면 자정을 넘는 창입니다. 1,200kbps에서 시간당 약 0.5GB이고 최대 녹화 용량을 넘으면 오래된 파일부터 지웁니다. 슬림 모드는 scripts/enable-slim-mode.sh로 깨우기 예약 권한을 넣은 뒤 켭니다. 켜면 시청자·녹화가 없고 입력이 10분 없을 때 Mac이 잠들고, 확인 간격마다 약 1분 깨어나 텔레그램 요청을 확인합니다. 움직임 녹화의 임계값·보존·보관 값은 녹화를 켤 때만 쓰입니다. 움직임 없는 구간은 임시 버퍼에서 삭제됩니다. 시스템 잠자기는 1분 전 녹화를 정리하고, 예약 깨우기 후 화면을 끕니다(잠깐 켜질 수 있음). 화면만 끄기는 시스템을 유지하되 휴식 중 녹화는 중단합니다. 두 모드 모두 정해진 시각에 녹화를 재개합니다. 앱을 실행·인증한 채 두세요. 키보드·마우스 사용은 우선하며, 로그아웃·재부팅 후에는 재인증이 필요합니다.")
+        let note = NSTextField(wrappingLabelWithString: "원격 시청은 메뉴의 원격 시청 대기로 켜고 끕니다. 원격 녹화는 웹의 실시간 화면에서 시간을 골라 시작하며, 접속을 끊어도 그 시간까지 움직임과 상관없이 연속으로 저장합니다. 1,200kbps에서 시간당 약 0.5GB이고 최대 녹화 용량을 넘으면 오래된 파일부터 지웁니다. 슬림 모드는 scripts/enable-slim-mode.sh로 깨우기 예약 권한을 넣은 뒤 켭니다. 켜면 시청자·녹화가 없고 입력이 10분 없을 때 Mac이 잠들고, 확인 간격마다 약 1분 깨어나 텔레그램 요청을 확인합니다. 움직임 녹화의 임계값·보존·보관 값은 녹화를 켤 때만 쓰입니다. 움직임 없는 구간은 임시 버퍼에서 삭제됩니다. 시스템 잠자기는 1분 전 녹화를 정리하고, 예약 깨우기 후 화면을 끕니다(잠깐 켜질 수 있음). 화면만 끄기는 시스템을 유지하되 휴식 중 녹화는 중단합니다. 두 모드 모두 정해진 시각에 녹화를 재개합니다. 앱을 실행·인증한 채 두세요. 키보드·마우스 사용은 우선하며, 로그아웃·재부팅 후에는 재인증이 필요합니다.")
         note.textColor = .secondaryLabelColor
 
         let saveButton = NSButton(title: "저장", target: self, action: #selector(save))
@@ -179,18 +157,6 @@ final class SettingsWindowController: NSWindowController {
         })
         setMinute(configuration.sleepSchedule.sleepMinute, in: sleepPicker)
         setMinute(configuration.sleepSchedule.wakeMinute, in: wakePicker)
-        recordingScheduleCheckbox.state = configuration.recordingSchedule.enabled ? .on : .off
-        for button in weekdayButtons {
-            button.state = configuration.recordingSchedule.weekdays.contains(button.tag) ? .on : .off
-        }
-        setMinute(configuration.recordingSchedule.startMinute, in: recordingStartPicker)
-        setMinute(configuration.recordingSchedule.endMinute, in: recordingEndPicker)
-        let clipMinutes = configuration.recordingSchedule.segmentMinutes
-        if clipLengthPopup.itemArray.allSatisfy({ $0.tag != clipMinutes }) {
-            clipLengthPopup.addItem(withTitle: "\(clipMinutes)분")
-            clipLengthPopup.lastItem?.tag = clipMinutes
-        }
-        clipLengthPopup.selectItem(withTag: clipMinutes)
         slimModeCheckbox.state = configuration.slimMode.enabled ? .on : .off
         let wakeMinutes = configuration.slimMode.wakeIntervalMinutes
         if wakeIntervalPopup.itemArray.allSatisfy({ $0.tag != wakeMinutes }) {
@@ -229,10 +195,6 @@ final class SettingsWindowController: NSWindowController {
                 sleepMinute: minute(in: sleepPicker), wakeMinute: minute(in: wakePicker),
                 mode: ScheduledRestMode(rawValue: restModePopup.selectedItem?.representedObject as? String ?? "") ?? .systemSleep),
             motionRegions: motionRegions,
-            recordingSchedule: RecordingSchedule(enabled: recordingScheduleCheckbox.state == .on,
-                weekdays: weekdayButtons.filter { $0.state == .on }.map(\.tag),
-                startMinute: minute(in: recordingStartPicker), endMinute: minute(in: recordingEndPicker),
-                segmentMinutes: clipLengthPopup.selectedTag()),
             slimMode: SlimModeSettings(enabled: slimModeCheckbox.state == .on, wakeIntervalMinutes: wakeIntervalPopup.selectedTag())
         )
         var appliedSystemSchedule = false

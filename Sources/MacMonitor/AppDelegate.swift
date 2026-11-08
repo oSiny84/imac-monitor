@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let liveStandbyMenuItem = NSMenuItem(title: "원격 시청 대기", action: #selector(toggleLiveStandby), keyEquivalent: "")
     private let startMenuItem = NSMenuItem(title: "움직임 녹화 시작", action: #selector(startMonitoring), keyEquivalent: "s")
     private let stopMenuItem = NSMenuItem(title: "움직임 녹화 중지", action: #selector(stopMonitoring), keyEquivalent: "x")
+    private let stopTimedRecordingMenuItem = NSMenuItem(title: "원격 녹화 중지", action: #selector(stopTimedRecording), keyEquivalent: "")
     private var readyToTerminate = false
     private var settingsWindowController: SettingsWindowController?
     private var authenticated = false
@@ -24,7 +25,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var systemSleeping = false
     private var sleepStartedAt: Date?
     private var schedule = DailySleepSchedule()
-    private var recordingSchedule = RecordingSchedule()
     private var wasRestTime: Bool?
     private var scheduleTimer: Timer?
     private let displaySleep = DisplaySleepController()
@@ -34,6 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let liveDemand = LiveDemandMonitor()
     private var liveStandby = true
     private var liveDemanded = false
+    // The remote "record for N hours" request, read from the gateway's file like the viewer lease.
+    private let recordingDemand = RecordingDemandMonitor()
+    private var timedRecording: RecordingDemand?
     // The mode the running capture was started with. Stays .off while no capture is requested.
     private var activeMode: CaptureMode = .off
     private var lastState: MonitoringState = .idle
@@ -97,6 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         startMenuItem.target = self
         stopMenuItem.target = self
+        stopTimedRecordingMenuItem.target = self
         liveStandbyMenuItem.target = self
 
         let menu = NSMenu()
@@ -111,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(startMenuItem)
         menu.addItem(stopMenuItem)
+        menu.addItem(stopTimedRecordingMenuItem)
         menu.addItem(.separator())
 
         let settingsItem = NSMenuItem(
@@ -156,7 +161,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             let configuration = try AppConfiguration.loadOrCreate()
             schedule = configuration.sleepSchedule
-            recordingSchedule = configuration.recordingSchedule
             slimMode = configuration.slimMode
             liveStandby = configuration.liveStandby
         } catch {
@@ -169,6 +173,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.liveDemanded = demanded
             self?.reconcileMonitoring()
         }
+        recordingDemand.onChange = { [weak self] demand in
+            self?.timedRecording = demand
+            self?.reconcileMonitoring()
+        }
+        recordingDemand.start()
         applyLiveStandby()
         let timer = Timer(timeInterval: 10, repeats: true) { [weak self] _ in self?.evaluateSchedule() }
         RunLoop.main.add(timer, forMode: .common)
@@ -185,6 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         displaySleep.cancel()
         displayOnlySleepPreventer.release()
         liveDemand.stop()
+        recordingDemand.stop()
         remoteStandbySleepPreventer.release()
         if let activity = remoteActivity {
             ProcessInfo.processInfo.endActivity(activity)
@@ -249,7 +259,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 wasRestTime = nil
                 if schedule.enabled { monitoringWanted = true }
             }
-            recordingSchedule = configuration.recordingSchedule
             slimMode = configuration.slimMode
             refreshWakeCapability()
             if configuration.liveStandby != liveStandby {
@@ -337,7 +346,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let resting = schedule.isRestTime(at: Date(), preparationMinutes: schedule.preparationMinutes)
         let desired = CaptureModePolicy.desiredMode(
             recordingWanted: monitoringWanted,
-            scheduledRecording: recordingSchedule.isActive(at: Date()),
+            timedRecording: timedRecording?.isActive(at: Date()) ?? false,
             resting: resting,
             systemSleeping: systemSleeping,
             liveStandby: liveStandby,
@@ -458,7 +467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// wake itself must stay awake; a problem found at willSleep would be found too late.
     private func refreshWakeCapability() {
         if slimStatus?.hasPrefix("슬림 모드 대기") == true { slimStatus = nil }
-        guard slimMode.enabled || recordingSchedule.enabled else {
+        guard slimMode.enabled else {
             canScheduleWake = false
             return
         }
@@ -477,11 +486,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Runs right before sleep, whatever caused it. The daily rest's repeat schedule wakes the
     /// Mac in the morning on its own, so no periodic wake is added during that rest.
     private func scheduleWakeIfNeeded() {
-        guard canScheduleWake, slimMode.enabled || recordingSchedule.enabled else { return }
+        guard canScheduleWake, slimMode.enabled else { return }
         let now = Date()
         if schedule.usesSystemSchedule, schedule.isRestTime(at: now, preparationMinutes: schedule.preparationMinutes) { return }
-        guard let target = slimPolicy.nextWake(after: now, interval: slimMode.enabled ? slimMode.wakeInterval : nil,
-                                               recordingSchedule: recordingSchedule) else { return }
+        guard let target = slimPolicy.nextWake(after: now, interval: slimMode.wakeInterval) else { return }
         cancelPendingWake()
         do {
             let stamp = try power.scheduleWake(at: target)
@@ -548,6 +556,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.terminate(nil)
     }
 
+    /// The web started this recording; the owner at the Mac may end it. Removing the gateway's
+    /// file is the same thing the web's 녹화 중지 does.
+    @objc private func stopTimedRecording() {
+        guard authenticated else { return }
+        do {
+            try recordingDemand.cancel()
+        } catch {
+            AppPasswordPrompt.showError("원격 녹화 요청을 지우지 못했습니다: \(error.localizedDescription)")
+        }
+        timedRecording = nil
+        reconcileMonitoring()
+    }
+
     @objc private func restartWeb() {
         guard authenticated, !terminating, !systemSleeping else { return }
         archiveAccess.restart()
@@ -589,9 +610,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     title = "원격 시청 대기 중 — 접속하면 카메라가 켜집니다"
                 }
             }
-            if recordingSchedule.enabled, let next = recordingSchedule.nextStart(after: Date()) {
-                title += " · 예약 녹화 \(Self.clockText(next)) 시작"
-            }
             if let slimStatus {
                 title += " · \(slimStatus)"
             } else if slimMode.enabled {
@@ -599,6 +617,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         case .running:
             symbol = "video.fill"
+            if activeMode == .timed, let until = timedRecording?.until {
+                title += " · \(Self.clockText(until))까지"
+            }
         case .failed:
             symbol = "video.slash"
             failed = true
@@ -614,6 +635,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
         startMenuItem.isEnabled = !monitoringWanted || failed
         stopMenuItem.isEnabled = monitoringWanted
+        stopTimedRecordingMenuItem.isEnabled = timedRecording != nil
     }
 
     private static func clockText(_ date: Date) -> String {

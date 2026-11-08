@@ -251,7 +251,7 @@ public final class MonitoringHealthReporter {
         let files = (try? FileManager.default.contentsOfDirectory(at: recordingsDirectory,
             includingPropertiesForKeys: [key, .isRegularFileKey], options: [.skipsHiddenFiles])) ?? []
         for file in files where file.pathExtension == "mp4" &&
-            (file.lastPathComponent.hasPrefix("motion-") || file.lastPathComponent.hasPrefix("schedule-")) {
+            (file.lastPathComponent.hasPrefix("motion-") || file.lastPathComponent.hasPrefix("remote-")) {
             if let values = try? file.resourceValues(forKeys: [key, .isRegularFileKey]),
                values.isRegularFile == true, let date = values.contentModificationDate {
                 recordRecording(at: file, completedAt: date)

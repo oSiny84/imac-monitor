@@ -117,14 +117,16 @@ func TestRecordingTimestampUsesMacLocalTime(t *testing.T) {
 
 // A scheduled clip is named by the moment FFmpeg opened it. Falling back to the modification
 // time would list the ten-minute file by its end, after every motion event it overlaps.
-func TestScheduledClipStartComesFromItsName(t *testing.T) {
+func TestRemoteClipStartComesFromItsName(t *testing.T) {
 	previousLocation := time.Local
 	time.Local = time.FixedZone("KST", 9*60*60)
 	t.Cleanup(func() { time.Local = previousLocation })
 	directory := t.TempDir()
-	name := "schedule-20261108T090000.mp4"
-	if err := os.WriteFile(filepath.Join(directory, name), []byte("video"), 0o600); err != nil {
-		t.Fatal(err)
+	// "schedule-" clips came from the retired weekly schedule; a leftover must still list right.
+	for _, name := range []string{"remote-20261108T090000.mp4", "schedule-20261108T090000.mp4"} {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte("video"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	store, err := NewStore(directory)
 	if err != nil {
@@ -135,8 +137,8 @@ func TestScheduledClipStartComesFromItsName(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC)
-	if len(items) != 1 || !items[0].StartedAt.Equal(expected) {
-		t.Fatalf("expected 09:00 KST (00:00 UTC), got %#v", items)
+	if len(items) != 2 || !items[0].StartedAt.Equal(expected) || !items[1].StartedAt.Equal(expected) {
+		t.Fatalf("expected 09:00 KST (00:00 UTC) for both, got %#v", items)
 	}
 	if !items[0].ProtectionSupported {
 		t.Fatal("a completed scheduled clip must be protectable like a motion event")

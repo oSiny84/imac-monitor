@@ -134,7 +134,7 @@ public final class RecordingRetentionManager {
     /// can only overlap segments starting strictly before `window.end`, so waiting until
     /// this moment computed for `window.end` covers all of them.
     private func promotionDecisionTime(segmentStart: Date) -> Date {
-        // A scheduled clip is long and no later motion window can claim it, so it only waits
+        // A remote clip is long and no later motion window can claim it, so it only waits
         // for FFmpeg to close the file. Ten seconds covers a late keyframe.
         if policy.keepEverySegment { return segmentStart.addingTimeInterval(policy.segmentDuration + 10) }
         return segmentStart.addingTimeInterval(policy.segmentDuration + policy.preRoll + 2)

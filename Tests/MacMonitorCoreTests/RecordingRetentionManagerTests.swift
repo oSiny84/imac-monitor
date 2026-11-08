@@ -245,7 +245,7 @@ final class RecordingRetentionManagerTests: XCTestCase {
         // stopAndFinalize applies the age limit against the real clock, so the clip names must
         // be recent; a fixed date older than maximumAge would be deleted at the finalize step.
         let base = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
-        let names = [0, 600, 1200].map { "schedule-\(timestamp(base.addingTimeInterval(Double($0)))).mp4" }
+        let names = [0, 600, 1200].map { "remote-\(timestamp(base.addingTimeInterval(Double($0)))).mp4" }
         for name in names { try Data(name.utf8).write(to: spool.appendingPathComponent(name)) }
 
         // Nobody recorded motion. The first clip closed at +600 s and is promoted ten seconds later.
