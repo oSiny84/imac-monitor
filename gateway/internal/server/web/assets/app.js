@@ -3,7 +3,7 @@
 
   const state = { csrfToken: "", liveLoaded: false, view: "live", mediaReachable: null, statusCheck: 0, recordingsCheck: 0,
     recordingOffset: 0, recordingLimit: 50, recordingRange: {}, recordingsLoading: false, recordingHasMore: false,
-    protectionWrites: new Set(), wakingSince: 0, wakeCheck: null, recordingError: false };
+    protectionWrites: new Set(), wakingSince: 0, wakeCheck: null, recordingError: false, lastHealth: null };
   const loginPanel = document.querySelector("#login-panel");
   const app = document.querySelector("#app");
   const connection = document.querySelector("#connection");
@@ -195,6 +195,7 @@
   }
 
   function renderHealth(health) {
+    state.lastHealth = health;
     const available = health?.available === true;
     const fresh = available && health.fresh === true;
     const receiving = fresh && health.state === "running" && health.frameState === "receiving";
@@ -442,7 +443,7 @@
     recordStart.disabled = true;
     try {
       const recording = await request("/api/recording/start", { method: "POST", body: JSON.stringify({ hours }) });
-      renderRecording(recording, null);
+      renderRecording(recording, state.lastHealth);
       // Recording restarts the capture, so the player reconnects on its own after a short gap.
       refreshStatus();
     } catch (error) {
