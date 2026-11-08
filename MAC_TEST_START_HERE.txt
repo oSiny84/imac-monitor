@@ -132,7 +132,9 @@ GitHub 다운로드가 504 등으로 실패하면 GitHub API 주소로 한 번 �
   로그에 공개 IP·도메인·사용자 경로가 있으면 필요에 따라 가려주세요.
 
 10. 원격 실시간 (핵심 기능)
-같은 Wi-Fi 시험: docs/SETUP_MAC.md의 "같은 Wi-Fi에서 먼저 시험하기"면 도메인 없이 됩니다.
+같은 Wi-Fi 접속: 폴더의 Setup Remote Web.command를 더블클릭하면 도메인 없이 됩니다.
+  마지막에 나오는 https://192.168.x.x:8443 주소를 휴대폰에서 엽니다. 재부팅마다 할 필요는 없고,
+  Mac 주소가 바뀌었을 때만 다시 더블클릭합니다. 자세한 설명: docs/SETUP_MAC.md 4절
 외부망 시험 준비: docs/SETUP_MAC.md 3~5번의 외부 WebRTC 호스트, HTTPS 인증서, 포트포워딩.
 외부망은 터미널에서 curl -s https://ifconfig.me 결과가 공유기 WAN IP와 같아야 합니다.
 다르면 통신사 NAT(CGNAT)라서 외부 접속이 되지 않습니다.

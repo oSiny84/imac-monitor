@@ -583,3 +583,165 @@ INSTALL_LINE="$(grep -n '^sudo install' "$SLIM_LOG" | head -n 1 | cut -d: -f1)"
 }
 echo 'PASS: enable-slim-mode checks the rule with visudo and then installs exactly it'
 rm -f "$FIXTURE/sudoers.d/macmonitor"
+
+# Same-Wi-Fi HTTPS setup. Every macOS tool it uses is mocked, and configure-gateway.sh is a
+# stub that records its arguments and writes the gateway.json keys the setup reads back.
+LAN="$FIXTURE/lan"
+LAN_DATA="$LAN/data"
+LAN_LOG="$LAN/calls.log"
+export LAN_LOG
+mkdir -p "$LAN/scripts" "$LAN/bin"
+cp "$ROOT_DIR/scripts/setup-lan-https.sh" "$LAN/scripts/"
+cat > "$LAN/scripts/configure-gateway.sh" <<'SH'
+#!/bin/bash
+set -eu
+printf 'configure %s|%s|%s\n' "$1" "$2" "$3" >> "$LAN_LOG"
+[[ "${TEST_CONFIGURE_FAIL:-0}" != 1 ]] || exit 1
+mkdir -p "$MACMONITOR_APP_SUPPORT"
+printf '{\n  "listenAddress": ":8443",\n  "tlsCertificateFile": "%s",\n  "tlsPrivateKeyFile": "%s",\n  "publicOrigin": "%s"\n}\n' \
+    "$2" "$3" "$1" > "$MACMONITOR_APP_SUPPORT/gateway.json"
+SH
+cat > "$LAN/bin/route" <<'SH'
+#!/bin/bash
+[[ -n "${TEST_ROUTE_IFACE:-}" ]] || exit 1
+printf '   route to: default\n  interface: %s\n' "$TEST_ROUTE_IFACE"
+SH
+cat > "$LAN/bin/ipconfig" <<'SH'
+#!/bin/bash
+[[ "$1" == getifaddr && "$2" == "${TEST_LAN_IFACE:-none}" ]] || exit 1
+printf '%s\n' "$TEST_LAN_IP"
+SH
+cat > "$LAN/bin/openssl" <<'SH'
+#!/bin/bash
+set -eu
+case "$1" in
+    req)
+        key="" out="" cnf="" days=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                -keyout) key="$2"; shift 2 ;;
+                -out) out="$2"; shift 2 ;;
+                -config) cnf="$2"; shift 2 ;;
+                -days) days="$2"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        printf 'req days=%s\n' "$days" >> "$LAN_LOG"
+        cat "$cnf" >> "$LAN_LOG"
+        printf 'KEY\n' > "$key"
+        printf 'CERT\n' > "$out" ;;
+    x509)
+        printf 'x509 %s\n' "$*" >> "$LAN_LOG"
+        exit "${TEST_CERT_EXPIRING:-0}" ;;
+    *) exit 1 ;;
+esac
+SH
+chmod +x "$LAN/scripts/"*.sh "$LAN/bin/"*
+# Leading NAME=value arguments become the mocks' settings; the rest go to the script. The
+# array expansion form keeps macOS bash 3.2 quiet about an empty array under set -u.
+run_lan() {
+    local settings=()
+    while [[ $# -gt 0 && "$1" == TEST_*=* ]]; do settings+=("$1"); shift; done
+    env PATH="$LAN/bin:$PATH" MACMONITOR_APP_SUPPORT="$LAN_DATA" ${settings[@]+"${settings[@]}"} \
+        bash "$LAN/scripts/setup-lan-https.sh" "$@" </dev/null
+}
+configure_count() { grep -c '^configure ' "$LAN_LOG" || true; }
+: > "$LAN_LOG"
+
+if run_lan TEST_LAN_IFACE=none > "$LAN/out.txt" 2>&1; then
+    echo 'FAIL: LAN setup succeeded without any network address'
+    exit 1
+fi
+grep -q '네트워크 주소를 찾지 못했습니다' "$LAN/out.txt" && [[ ! -e "$LAN_DATA/gateway.json" && "$(configure_count)" == 0 ]] || {
+    echo 'FAIL: LAN setup without an address must explain and write nothing'
+    cat "$LAN/out.txt"
+    exit 1
+}
+echo 'PASS: LAN setup explains a missing network address and writes nothing'
+
+run_lan TEST_ROUTE_IFACE=en1 TEST_LAN_IFACE=en1 TEST_LAN_IP=192.168.0.7 > "$LAN/out.txt" 2>&1 || {
+    echo 'FAIL: first LAN setup failed'
+    cat "$LAN/out.txt"
+    exit 1
+}
+grep -q '^configure https://192.168.0.7:8443|'"$LAN_DATA"'/LAN-HTTPS/[0-9A-Za-z-]*/cert.pem|'"$LAN_DATA"'/LAN-HTTPS/[0-9A-Za-z-]*/key.pem$' "$LAN_LOG" &&
+    grep -q '^subjectAltName = IP:192.168.0.7$' "$LAN_LOG" && grep -q '^extendedKeyUsage = serverAuth$' "$LAN_LOG" &&
+    grep -q '^req days=365$' "$LAN_LOG" && grep -q 'https://192.168.0.7:8443' "$LAN/out.txt" || {
+    echo 'FAIL: first LAN setup did not use the default-route address, a server certificate and the gateway setup'
+    cat "$LAN_LOG" "$LAN/out.txt"
+    exit 1
+}
+echo 'PASS: LAN setup certifies the default-route address and configures the gateway with it'
+
+run_lan TEST_ROUTE_IFACE=en1 TEST_LAN_IFACE=en1 TEST_LAN_IP=192.168.0.7 > "$LAN/out.txt" 2>&1 || {
+    echo 'FAIL: repeated LAN setup failed'
+    cat "$LAN/out.txt"
+    exit 1
+}
+[[ "$(configure_count)" == 1 ]] && grep -q '이미 이 주소로 설정되어 있습니다' "$LAN/out.txt" && grep -q 'https://192.168.0.7:8443' "$LAN/out.txt" || {
+    echo 'FAIL: an unchanged address must only print the address, without asking for the password again'
+    cat "$LAN_LOG" "$LAN/out.txt"
+    exit 1
+}
+echo 'PASS: LAN setup with an unchanged address and a valid certificate only prints the address'
+
+run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.9 > "$LAN/out.txt" 2>&1 || {
+    echo 'FAIL: LAN setup after an address change failed'
+    cat "$LAN/out.txt"
+    exit 1
+}
+grep -q '^configure https://192.168.0.9:8443|' "$LAN_LOG" && grep -q '주소가 바뀌었습니다' "$LAN/out.txt" &&
+    [[ "$(configure_count)" == 2 && "$(find "$LAN_DATA/LAN-HTTPS" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')" == 1 ]] || {
+    echo 'FAIL: an address change must certify the new address and keep only the certificate in use'
+    cat "$LAN_LOG" "$LAN/out.txt"
+    ls -R "$LAN_DATA/LAN-HTTPS"
+    exit 1
+}
+echo 'PASS: LAN setup follows an address change and removes the old certificate'
+
+run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.9 TEST_CERT_EXPIRING=1 > "$LAN/out.txt" 2>&1 || {
+    echo 'FAIL: LAN setup with an expiring certificate failed'
+    cat "$LAN/out.txt"
+    exit 1
+}
+[[ "$(configure_count)" == 3 ]] || {
+    echo 'FAIL: a certificate expiring within 30 days must be renewed'
+    cat "$LAN_LOG"
+    exit 1
+}
+echo 'PASS: LAN setup renews a certificate that expires within 30 days'
+
+cp "$LAN_DATA/gateway.json" "$LAN/gateway-before.json"
+if run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.11 TEST_CONFIGURE_FAIL=1 > "$LAN/out.txt" 2>&1; then
+    echo 'FAIL: LAN setup reported success when the gateway setup failed'
+    exit 1
+fi
+cmp -s "$LAN_DATA/gateway.json" "$LAN/gateway-before.json" &&
+    [[ "$(find "$LAN_DATA/LAN-HTTPS" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')" == 1 ]] &&
+    grep -q '기존 설정은 그대로입니다' "$LAN/out.txt" || {
+    echo 'FAIL: a failed gateway setup must keep the working configuration and its certificate'
+    cat "$LAN/out.txt"
+    ls -R "$LAN_DATA/LAN-HTTPS"
+    exit 1
+}
+echo 'PASS: a failed LAN setup keeps the working configuration and certificate'
+
+printf '{\n  "tlsCertificateFile": "/etc/ssl/camera.pem",\n  "publicOrigin": "https://camera.example.net:8443"\n}\n' > "$LAN_DATA/gateway.json"
+before="$(configure_count)"
+run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.9 > "$LAN/out.txt" 2>&1 || {
+    echo 'FAIL: LAN setup failed beside a domain configuration'
+    cat "$LAN/out.txt"
+    exit 1
+}
+[[ "$(configure_count)" == "$before" ]] && grep -q 'camera.example.net' "$LAN_DATA/gateway.json" && grep -q '도메인' "$LAN/out.txt" || {
+    echo 'FAIL: LAN setup replaced a domain configuration without being asked'
+    cat "$LAN/out.txt"
+    exit 1
+}
+run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.9 --replace > "$LAN/out.txt" 2>&1 &&
+    [[ "$(configure_count)" == "$((before + 1))" ]] || {
+    echo 'FAIL: --replace did not switch a domain configuration to the LAN address'
+    cat "$LAN/out.txt"
+    exit 1
+}
+echo 'PASS: LAN setup leaves a domain configuration alone unless --replace is given'

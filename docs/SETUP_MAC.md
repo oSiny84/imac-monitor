@@ -121,30 +121,20 @@ open dist/MacMonitor.app
 
 HTTPS 웹 서버는 앱 비밀번호 확인 후 카메라와 독립적으로 실행됩니다. `움직임 녹화 중지`나 `시스템 유지 · 화면만 끄기` 예약 휴식 중에도 웹 로그인·녹화 목록·재생을 사용할 수 있습니다. 카메라를 다시 시작해도 설정이 같으면 웹 서버와 기존 로그인을 유지합니다. 앱을 종료하거나 Mac이 실제 잠자기에 들어가면 접속할 수 없으며, 깨어난 뒤 앱이 웹 서버를 다시 시작합니다. 메뉴의 `원격 시청 대기`가 켜져 있으면 화면은 꺼져도 시스템 유휴 잠자기를 막아 접속할 수 있는 상태를 유지하고, 끄면 일반 자동 잠자기를 막지 않습니다.
 
-### 같은 Wi-Fi에서 먼저 시험하기
+### 같은 Wi-Fi에서 쓰기 (더블클릭)
 
-도메인과 포트포워딩 없이 자체 서명 인증서로 원격 시청 흐름을 먼저 확인할 수 있습니다. 앱을 한 번 빌드한 뒤 터미널에서 실행합니다. 경로는 압축을 푼 폴더에 맞게 바꿉니다.
+도메인과 포트포워딩 없이 자체 서명 인증서로 같은 Wi-Fi의 휴대폰에서 접속합니다. 앱을 한 번 빌드한 뒤 폴더의 `Setup Remote Web.command`를 더블클릭합니다. 터미널에서는 `./scripts/setup-lan-https.sh`와 같습니다.
 
-```bash
-mkdir -p ~/macmonitor-cert && cd ~/macmonitor-cert
-IP=$(ipconfig getifaddr en0 || ipconfig getifaddr en1)
-cat > cert.cnf <<EOF
-[req]
-distinguished_name = dn
-x509_extensions = v3
-prompt = no
-[dn]
-CN = MacMonitor LAN Test
-[v3]
-subjectAltName = IP:$IP
-EOF
-openssl req -x509 -newkey rsa:2048 -nodes -days 30 -keyout key.pem -out cert.pem -config cert.cnf
-chmod 600 key.pem
-~/Downloads/MacMonitor/scripts/configure-gateway.sh "https://$IP:8443" "$HOME/macmonitor-cert/cert.pem" "$HOME/macmonitor-cert/key.pem"
-echo "https://$IP:8443"
-```
+1. 이 Mac의 현재 주소(기본 경로의 인터페이스, 없으면 `en0`·`en1`)를 찾습니다.
+2. 그 주소용 인증서(1년, 서버 인증 용도)를 `~/Library/Application Support/MacMonitor/LAN-HTTPS/` 아래 새 폴더에 만듭니다.
+3. `configure-gateway.sh`를 불러 웹 접속 비밀번호(12자 이상)를 두 번 묻고 `gateway.json`을 저장합니다. 실패하면 기존 설정과 인증서를 그대로 둡니다.
+4. 마지막에 휴대폰에서 열 주소(`https://192.168.x.x:8443`)를 보여 줍니다. 앱이 약 10초 안에 새 설정으로 웹 서버를 다시 켭니다.
 
-웹 접속 비밀번호를 12자 이상으로 두 번 입력합니다. 앱이 약 10초 안에 설정을 감지합니다. 같은 Wi-Fi의 휴대폰에서 마지막 줄의 주소를 열고, 인증서 경고는 이 시험에서만 진행을 선택합니다. macOS 방화벽이 수신 연결을 물으면 허용합니다. 외부망에서 쓸 때는 신뢰할 수 있는 인증서와 실제 도메인으로 같은 스크립트를 다시 실행합니다.
+다시 실행해도 안전합니다. 이미 지금 주소로 설정되어 있고 인증서가 30일 넘게 남았으면 아무것도 묻지 않고 주소만 보여 줍니다. 주소가 바뀌었거나 인증서 만료가 30일 안이면 새로 만들고 비밀번호를 다시 묻습니다(같은 비밀번호를 넣어도 됩니다). 도메인 주소로 설정한 `gateway.json`이 있으면 바꾸지 않으며, 바꾸려면 `./scripts/setup-lan-https.sh --replace`를 실행합니다.
+
+재부팅할 때마다 실행할 필요는 없습니다. 웹 서버는 앱이 켜지고 앱 비밀번호를 입력하면 자동으로 다시 뜹니다. 다시 실행할 때는 공유기가 이 Mac에 다른 주소를 줬을 때와 인증서가 1년 가까이 되었을 때뿐입니다. 공유기에서 이 Mac에 고정 주소(DHCP 예약)를 주면 주소가 바뀌지 않습니다.
+
+휴대폰에서 처음 열 때 인증서 경고는 이 주소에서만 진행을 선택합니다(아이폰 사파리 `세부사항 보기` → `이 웹 사이트 방문`, 안드로이드 크롬 `고급` → `계속`). macOS 방화벽이 수신 연결을 물으면 허용합니다. 외부망에서 쓸 때는 신뢰할 수 있는 인증서와 실제 도메인으로 `configure-gateway.sh`를 실행합니다.
 
 ## 5. 공유기 포트포워딩
 

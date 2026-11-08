@@ -17,7 +17,7 @@ def main():
     files = [root / name for name in (
         "Package.swift", "README.md", "IMPLEMENTATION_PLAN.md",
         "MAC_TEST_START_HERE.txt", "Build MacMonitor.command",
-        "Uninstall MacMonitor.command",
+        "Uninstall MacMonitor.command", "Setup Remote Web.command",
         ".gitignore", ".gitattributes",
     )]
     allowed = {".swift", ".md", ".txt", ".plist", ".entitlements",

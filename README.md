@@ -59,7 +59,7 @@ Mac으로 옮길 최신 소스 ZIP은 [releases](releases/)에 있습니다. 날
 
 전체 순서는 [docs/SETUP_MAC.md](docs/SETUP_MAC.md)에 있습니다. 요약하면 다음과 같습니다.
 
-명령어 없이 실행하려면 Finder에서 저장소 루트의 `Build MacMonitor.command`를 더블클릭합니다. 필요한 MediaMTX 준비, 테스트, Thread Sanitizer, 앱 빌드, 실행 전 진단과 앱 실행까지 이어서 처리하며 전체 출력은 `dist/build-날짜-시간.log`에 저장합니다.
+명령어 없이 실행하려면 Finder에서 저장소 루트의 `Build MacMonitor.command`를 더블클릭합니다. 필요한 MediaMTX 준비, 테스트, Thread Sanitizer, 앱 빌드, 실행 전 진단과 앱 실행까지 이어서 처리하며 전체 출력은 `dist/build-날짜-시간.log`에 저장합니다. 같은 Wi-Fi의 휴대폰에서 접속하려면 빌드 뒤 `Setup Remote Web.command`를 더블클릭합니다. 인증서와 웹 설정을 만들고 열 주소를 보여 주며, Mac 주소가 바뀌었을 때만 다시 실행하면 됩니다.
 
 터미널에서 개별 실행하려면 다음 명령을 사용합니다.
 
