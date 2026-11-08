@@ -124,6 +124,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/recordings", s.requireSession(http.HandlerFunc(s.listRecordings)))
 	mux.Handle("GET /api/recordings/{id}/thumbnail", s.requireSession(http.HandlerFunc(s.serveThumbnail)))
 	mux.Handle("PUT /api/recordings/{id}/protection", s.requireSession(http.HandlerFunc(s.setRecordingProtection)))
+	mux.Handle("DELETE /api/recordings/{id}", s.requireSession(http.HandlerFunc(s.deleteRecording)))
 	mux.Handle("GET /recordings/{id}", s.requireSession(http.HandlerFunc(s.serveRecording)))
 	mux.Handle("HEAD /recordings/{id}", s.requireSession(http.HandlerFunc(s.serveRecording)))
 	liveHandler := s.requireSession(http.HandlerFunc(s.proxyLive))
@@ -311,6 +312,32 @@ func (s *Server) listRecordings(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	writeJSON(writer, http.StatusOK, page)
+}
+
+// deleteRecording drops one completed recording at the owner's request. Protected recordings
+// are refused rather than silently unprotected, so a tap cannot undo a deliberate "keep".
+func (s *Server) deleteRecording(writer http.ResponseWriter, request *http.Request) {
+	_, session, _ := s.requestSession(request)
+	if !csrfMatches(request, session.CSRF) {
+		writeError(writer, http.StatusForbidden, "CSRF 검증에 실패했습니다.")
+		return
+	}
+	id := request.PathValue("id")
+	err := s.recordings.Delete(request.Context(), id)
+	switch {
+	case err == nil:
+		log.Printf("recording deleted from the web: %s", id)
+		writer.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, fs.ErrNotExist):
+		http.NotFound(writer, request)
+	case errors.Is(err, recordings.ErrProtected):
+		writeError(writer, http.StatusConflict, "보호된 녹화는 삭제할 수 없습니다. 먼저 보호를 해제하세요.")
+	case errors.Is(err, recordings.ErrProtectionUnsupported):
+		writeError(writer, http.StatusBadRequest, "정리 중인 임시 세그먼트는 삭제할 수 없습니다. 완성된 녹화를 선택하세요.")
+	default:
+		log.Printf("recording delete failed for %s: %v", id, err)
+		writeError(writer, http.StatusServiceUnavailable, "보호 상태를 확인할 수 없어 삭제하지 않았습니다. iMac 진단 로그를 확인하세요.")
+	}
 }
 
 func (s *Server) serveRecording(writer http.ResponseWriter, request *http.Request) {

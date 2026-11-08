@@ -69,9 +69,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 deviceUniqueIDProvider: {
                     (try? AppConfiguration.loadOrCreate())?.cameraUniqueID
                 },
+                audioEnabledProvider: {
+                    (try? AppConfiguration.loadOrCreate())?.audioEnabled ?? true
+                },
                 frameHandler: { [weak pipeline, weak healthReporter] sampleBuffer in
                     healthReporter?.recordFrame()
                     pipeline?.consume(sampleBuffer: sampleBuffer)
+                },
+                audioHandler: { [weak pipeline] sampleBuffer in
+                    pipeline?.consume(audioSampleBuffer: sampleBuffer)
                 }
             )
         self.camera = camera
@@ -619,6 +625,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             symbol = "video.fill"
             if activeMode == .timed, let until = timedRecording?.until {
                 title += " · \(Self.clockText(until))까지"
+            }
+            if case let .running(info) = lastState {
+                if let problem = pipeline.audioProblem {
+                    title += " · 소리 없음 — \(problem)"
+                } else if let reason = info.audio.reason {
+                    title += " · 소리 없음 — \(reason)"
+                }
             }
         case .failed:
             symbol = "video.slash"

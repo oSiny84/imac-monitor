@@ -13,14 +13,15 @@ function fixture(mode = "auto", options = {}) {
   const windowEvents = new Map(), documentEvents = new Map();
   const listen = (events, type, callback) => { if (!events.has(type)) events.set(type, []); events.get(type).push(callback); };
   const dispatch = (events, type, event = {}) => { for (const callback of events.get(type) || []) callback(event); };
-  const video = { paused: true, currentTime: 0, srcObject: null, pause() { this.paused = true; }, play() { this.paused = false; return Promise.resolve(); } };
+  const video = { paused: true, muted: true, currentTime: 0, srcObject: null, pause() { this.paused = true; }, play() { this.paused = false; return Promise.resolve(); } };
   const status = {}, metrics = {};
+  const soundButton = { textContent: "", listeners: {}, addEventListener(type, callback) { this.listeners[type] = callback; }, setAttribute() {} };
   const document = { hidden: Boolean(options.hidden),
-    querySelector: (selector) => options.auto ? ({ "#remote-video": video, "#player-status": status, "#player-metrics": metrics }[selector] || null) : null,
+    querySelector: (selector) => options.auto ? ({ "#remote-video": video, "#player-status": status, "#player-metrics": metrics, "#sound-toggle": soundButton }[selector] || null) : null,
     addEventListener: (type, callback) => listen(documentEvents, type, callback) };
   class Peer {
     constructor(options) { this.options = options; this.iceGatheringState = "complete"; this.connectionState = "new"; peers.push(this); }
-    addTransceiver(kind, options) { this.transceiver = { kind, options }; }
+    addTransceiver(kind, options) { (this.transceivers ??= []).push({ kind, options }); }
     async createOffer() { return { type: "offer", sdp: "test offer with gathered ICE" }; }
     async setLocalDescription(value) { this.localDescription = value; }
     async setRemoteDescription(value) { this.remoteDescription = value; this.connectionState = "connected"; this.ontrack?.({ streams: [{}], track: {} }); }
@@ -31,7 +32,7 @@ function fixture(mode = "auto", options = {}) {
   }
   const response = (status, body, location = null) => ({ status, ok: status < 400,
     headers: { get: () => location }, json: async () => body, text: async () => "test SDP answer" });
-  const context = vm.createContext({ console, document, URL, URLSearchParams, AbortController,
+  const context = vm.createContext({ console, document, URL, URLSearchParams, AbortController, localStorage: options.localStorage,
     location: { origin: "https://camera.example", search: `?quality=${mode}` }, RTCPeerConnection: Peer,
     addEventListener: (type, callback) => listen(windowEvents, type, callback),
     Date: class extends Date { static now() { return now; } },
@@ -59,8 +60,8 @@ function fixture(mode = "auto", options = {}) {
   for (const file of ["live-quality.js", "live-player.js"]) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "../gateway/internal/server/web/assets", file), "utf8"), context);
   }
-  const player = options.auto ? null : new context.MacMonitorLivePlayer(video, status, metrics, mode);
-  return { context, player, api, video, status, metrics, requests, peers, intervals, timeouts,
+  const player = options.auto ? null : new context.MacMonitorLivePlayer(video, status, metrics, mode, soundButton);
+  return { context, player, api, video, status, metrics, soundButton, requests, peers, intervals, timeouts,
     event: (type, event) => dispatch(windowEvents, type, event),
     visibility: (hidden) => { document.hidden = hidden; dispatch(documentEvents, "visibilitychange"); },
     advance: (milliseconds) => { now += milliseconds; },
@@ -111,6 +112,34 @@ test("video stats use interval deltas and do not treat counter resets as bandwid
   assert.equal(next.loss, 5 / 105);
   assert.equal(next.rtt, 0.04);
   assert.equal(videoStats(report(4000, 500, 1, 1, 0), next.current).kbps, undefined);
+});
+
+test("the player asks for sound as well, starts muted, and a tap unmutes for the rest of the visit", async () => {
+  const { player, peers, video, soundButton } = fixture("original");
+  await player.connect();
+  assert.deepEqual(peers[0].transceivers.map((item) => item.kind), ["video", "audio"]);
+  assert.equal(video.muted, true, "browsers autoplay only muted video");
+  assert.equal(soundButton.textContent, "소리 켜기");
+  soundButton.listeners.click();
+  assert.equal(video.muted, false);
+  assert.equal(soundButton.textContent, "소리 끄기");
+  soundButton.listeners.click();
+  assert.equal(video.muted, true);
+  assert.equal(soundButton.textContent, "소리 켜기");
+});
+
+test("a remembered sound preference the browser refuses falls back to muted playback with a hint", async () => {
+  const { player, video, status } = fixture("original", { localStorage: { getItem: () => "on", setItem() {} } });
+  video.play = function () {
+    if (!this.muted) return Promise.reject(new Error("NotAllowedError"));
+    this.paused = false;
+    return Promise.resolve();
+  };
+  await player.connect();
+  await flush();
+  assert.equal(video.muted, true, "sound is given up rather than the picture");
+  assert.equal(video.paused, false);
+  assert.match(status.textContent, /소리 켜기/);
 });
 
 test("player gathers ICE in its authenticated SDP POST, uses no relay and closes old resources", async () => {

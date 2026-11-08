@@ -165,6 +165,27 @@ if [[ -n "$FFMPEG_PATH" ]]; then
     else
         fail "VideoToolbox synthetic encode failed"
     fi
+    # Sound is optional: the app runs video-only without these, so they warn instead of fail.
+    AUDIO_MISSING=""
+    for encoder in libopus aac; do
+        "$FFMPEG_PATH" -hide_banner -encoders 2>/dev/null | grep "[[:space:]]$encoder[[:space:]]" >/dev/null || AUDIO_MISSING="$AUDIO_MISSING $encoder"
+    done
+    if [[ -z "$AUDIO_MISSING" ]]; then
+        pass "FFmpeg provides libopus and aac (sound)"
+        # The app's own command shape: two raw inputs, Opus for the stream, AAC for the files.
+        if "$FFMPEG_PATH" -hide_banner -loglevel error -nostdin \
+            -f rawvideo -pixel_format nv12 -video_size 320x240 -framerate 15 -i /dev/zero \
+            -f s16le -ar 48000 -ac 1 -i /dev/zero -t 0.2 \
+            -map 0:v:0 -c:v h264_videotoolbox -realtime:v true -allow_sw:v 1 -b:v 300k \
+            -map 1:a:0 -c:a:0 libopus -b:a:0 48k -map 1:a:0 -c:a:1 aac -b:a:1 64k \
+            -flags +global_header -f tee "[f=null:select='v:0,a:0']-|[f=null:select='v:0,a:1']-" >/dev/null 2>&1; then
+            pass "FFmpeg encoded sound with Opus and AAC through the tee (the app's command shape)"
+        else
+            warn "FFmpeg rejected the app's sound command; the camera will run without sound (the app logs the reason)"
+        fi
+    else
+        warn "FFmpeg lacks$AUDIO_MISSING; the camera will run without sound (evermeet.cx builds include both)"
+    fi
 else
     fail "FFmpeg is not installed in a path visible to the app"
 fi
@@ -205,6 +226,11 @@ done
 if [[ -f "$INFO_PLIST" ]] && command -v plutil >/dev/null 2>&1; then
     BUNDLE_ID="$(plutil -extract CFBundleIdentifier raw -o - "$INFO_PLIST" 2>/dev/null || true)"
     MINIMUM_OS="$(plutil -extract LSMinimumSystemVersion raw -o - "$INFO_PLIST" 2>/dev/null || true)"
+    if [[ -n "$(plutil -extract NSMicrophoneUsageDescription raw -o - "$INFO_PLIST" 2>/dev/null || true)" ]]; then
+        pass "Info.plist explains microphone use"
+    else
+        fail "Info.plist lacks NSMicrophoneUsageDescription; macOS terminates an app that touches the microphone without it"
+    fi
     [[ "$BUNDLE_ID" == "local.macmonitor.app" ]] && pass "bundle identifier is $BUNDLE_ID" || fail "unexpected bundle identifier: ${BUNDLE_ID:-missing}"
     [[ "$MINIMUM_OS" == "12.0" ]] && pass "deployment target is macOS $MINIMUM_OS" || fail "unexpected deployment target: ${MINIMUM_OS:-missing}"
 fi
@@ -220,6 +246,11 @@ if command -v codesign >/dev/null 2>&1; then
         pass "app signature contains the camera entitlement"
     else
         fail "app signature is missing the camera entitlement"
+    fi
+    if echo "$SIGNED_ENTITLEMENTS" | grep 'com.apple.security.device.audio-input' >/dev/null; then
+        pass "app signature contains the microphone entitlement"
+    else
+        warn "app signature lacks the microphone entitlement; sound will be unavailable"
     fi
 fi
 

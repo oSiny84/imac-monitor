@@ -47,22 +47,33 @@ public final class CameraCaptureService: NSObject, CameraCapturing {
     private let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "com.macmonitor.capture.session")
     private let frameQueue = DispatchQueue(label: "com.macmonitor.capture.frames")
+    private let audioQueue = DispatchQueue(label: "com.macmonitor.capture.audio")
     private let loggerLock = NSLock()
     private let stateLock = NSLock()
     private var videoOutput: AVCaptureVideoDataOutput?
+    private var audioOutput: AVCaptureAudioDataOutput?
+    private var configuredAudio: AudioCaptureState = .off // sessionQueue-owned
+    private var audioAuthorized = false
+    private var audioFormatVerdict: Bool? // audioQueue-owned
     private var logger: CaptureProbeLogger?
     private var configuredDeviceName: String?
     private var runtimeErrorObserver: NSObjectProtocol?
     private var active = false
     private let deviceUniqueIDProvider: () -> String?
+    private let audioEnabledProvider: () -> Bool
     private let frameHandler: ((CMSampleBuffer) -> Void)?
+    private let audioHandler: ((CMSampleBuffer) -> Void)?
 
     public init(
         deviceUniqueIDProvider: @escaping () -> String? = { nil },
-        frameHandler: ((CMSampleBuffer) -> Void)? = nil
+        audioEnabledProvider: @escaping () -> Bool = { false },
+        frameHandler: ((CMSampleBuffer) -> Void)? = nil,
+        audioHandler: ((CMSampleBuffer) -> Void)? = nil
     ) {
         self.deviceUniqueIDProvider = deviceUniqueIDProvider
+        self.audioEnabledProvider = audioEnabledProvider
         self.frameHandler = frameHandler
+        self.audioHandler = audioHandler
         super.init()
         // The macOS 13.1 SDK in Xcode 14.2 predates AVCaptureSession.runtimeErrorNotification.
         runtimeErrorObserver = NotificationCenter.default.addObserver(
@@ -101,12 +112,30 @@ public final class CameraCaptureService: NSObject, CameraCapturing {
         return preview
     }
 
+    /// Camera access decides whether capture may start. The microphone is asked for right
+    /// after, while the owner is still at the Mac for the prompt, but a refusal only leaves the
+    /// recording silent: the completion is still true.
     public func requestAuthorization(completion: @escaping (Bool) -> Void) {
-        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        Self.requestAccess(.video) { [weak self] granted in
+            guard granted, let self, self.audioEnabledProvider() else {
+                completion(granted)
+                return
+            }
+            Self.requestAccess(.audio) { audioGranted in
+                self.stateLock.lock()
+                self.audioAuthorized = audioGranted
+                self.stateLock.unlock()
+                completion(true)
+            }
+        }
+    }
+
+    private static func requestAccess(_ mediaType: AVMediaType, completion: @escaping (Bool) -> Void) {
+        switch AVCaptureDevice.authorizationStatus(for: mediaType) {
         case .authorized:
             completion(true)
         case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .video, completionHandler: completion)
+            AVCaptureDevice.requestAccess(for: mediaType, completionHandler: completion)
         case .denied, .restricted:
             completion(false)
         @unknown default:
@@ -142,7 +171,8 @@ public final class CameraCaptureService: NSObject, CameraCapturing {
                     .success(
                         CaptureRuntimeInfo(
                             deviceName: deviceName,
-                            logURL: CaptureProbeLogger.defaultLogURL
+                            logURL: CaptureProbeLogger.defaultLogURL,
+                            audio: self.configuredAudio
                         )
                     )
                 )
@@ -165,6 +195,7 @@ public final class CameraCaptureService: NSObject, CameraCapturing {
                 self.session.stopRunning()
             }
             self.frameQueue.sync {}
+            self.audioQueue.sync { self.audioFormatVerdict = nil }
             let logger = self.currentLogger()
             logger?.recordStopped()
             self.setLogger(nil)
@@ -177,6 +208,8 @@ public final class CameraCaptureService: NSObject, CameraCapturing {
             }
             self.session.commitConfiguration()
             self.videoOutput = nil
+            self.audioOutput = nil
+            self.configuredAudio = .off
             self.configuredDeviceName = nil
             completion()
         }
@@ -225,6 +258,7 @@ public final class CameraCaptureService: NSObject, CameraCapturing {
             connection.automaticallyAdjustsVideoMirroring = false
             connection.isVideoMirrored = false
         }
+        configuredAudio = configureAudio()
         session.commitConfiguration()
 
         do {
@@ -238,6 +272,58 @@ public final class CameraCaptureService: NSObject, CameraCapturing {
         }
         videoOutput = output
         configuredDeviceName = device.localizedName
+    }
+
+    /// Adds the default microphone when the owner wants sound and allowed it. Every failure is
+    /// a reason in the status, never a failed camera start. The output is asked for 48 kHz
+    /// mono 16-bit integer samples, which is exactly what FFmpeg's raw `s16le` input expects.
+    private func configureAudio() -> AudioCaptureState {
+        guard audioEnabledProvider() else { return .off }
+        stateLock.lock()
+        let authorized = audioAuthorized
+        stateLock.unlock()
+        guard authorized else { return .unavailable("마이크 권한 필요") }
+        guard let microphone = AVCaptureDevice.default(for: .audio) else { return .unavailable("마이크 없음") }
+        guard let input = try? AVCaptureDeviceInput(device: microphone), session.canAddInput(input) else {
+            return .unavailable("마이크 입력 연결 실패")
+        }
+        let output = AVCaptureAudioDataOutput()
+        output.audioSettings = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 48_000,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false
+        ]
+        output.setSampleBufferDelegate(self, queue: audioQueue)
+        guard session.canAddOutput(output) else { return .unavailable("마이크 출력 연결 실패") }
+        session.addInput(input)
+        session.addOutput(output)
+        audioOutput = output
+        return .on
+    }
+
+    /// Checks the first buffer against what FFmpeg is told. Mis-typed samples would be heard
+    /// as noise, so a mismatch drops the audio and logs why instead.
+    private func audioFormatIsUsable(_ sampleBuffer: CMSampleBuffer) -> Bool {
+        if let verdict = audioFormatVerdict { return verdict }
+        var usable = false
+        if let description = CMSampleBufferGetFormatDescription(sampleBuffer),
+           let basic = CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee {
+            usable = basic.mFormatID == kAudioFormatLinearPCM && basic.mSampleRate == 48_000
+                && basic.mChannelsPerFrame == 1 && basic.mBitsPerChannel == 16
+                && basic.mFormatFlags & kAudioFormatFlagIsFloat == 0
+                && basic.mFormatFlags & kAudioFormatFlagIsBigEndian == 0
+                && basic.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0
+            if !usable {
+                NSLog("MacMonitor: microphone delivers %.0f Hz, %u channel(s), %u bit, flags %u; not the 48 kHz mono 16-bit the encoder expects, so audio is dropped",
+                      basic.mSampleRate, basic.mChannelsPerFrame, basic.mBitsPerChannel, basic.mFormatFlags)
+            }
+        }
+        audioFormatVerdict = usable
+        return usable
     }
 
     private func setLogger(_ newLogger: CaptureProbeLogger?) {
@@ -289,12 +375,18 @@ public final class CameraCaptureService: NSObject, CameraCapturing {
     }
 }
 
-extension CameraCaptureService: AVCaptureVideoDataOutputSampleBufferDelegate {
+extension CameraCaptureService: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
+    // Both delegate protocols share this one method; the output tells the two apart.
     public func captureOutput(
         _ output: AVCaptureOutput,
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
+        if output is AVCaptureAudioDataOutput {
+            guard audioFormatIsUsable(sampleBuffer) else { return }
+            audioHandler?(sampleBuffer)
+            return
+        }
         currentLogger()?.recordFrame(sampleBuffer)
         frameHandler?(sampleBuffer)
     }

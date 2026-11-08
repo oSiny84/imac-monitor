@@ -28,6 +28,8 @@ type Snapshot struct {
 	LiveStandby        bool       `json:"liveStandby"`
 	CaptureMode        string     `json:"captureMode,omitempty"`
 	SlimMode           bool       `json:"slimMode"`
+	Audio              string     `json:"audio,omitempty"`
+	AudioDetail        string     `json:"audioDetail,omitempty"`
 }
 
 type Status struct {
@@ -74,6 +76,11 @@ func Read(path string, now time.Time) Status {
 	}
 	switch snapshot.CaptureMode {
 	case "", "off", "live", "recording", "timed":
+	default:
+		return unknown
+	}
+	switch snapshot.Audio {
+	case "", "on", "off", "unavailable":
 	default:
 		return unknown
 	}

@@ -1,8 +1,15 @@
 (() => {
   "use strict";
   class LivePlayer {
-    constructor(video, status, metrics, mode) {
-      this.video = video; this.status = status; this.metrics = metrics;
+    constructor(video, status, metrics, mode, soundButton = null) {
+      this.video = video; this.status = status; this.metrics = metrics; this.soundButton = soundButton;
+      // Browsers autoplay only muted video, so sound starts off and a tap turns it on. The
+      // choice is remembered; if the browser then refuses to autoplay with sound, playback
+      // falls back to muted rather than showing nothing.
+      this.soundWanted = false; this.soundFallback = false;
+      try { this.soundWanted = localStorage.getItem("macmonitor-live-sound") === "on"; } catch { /* default muted */ }
+      if (soundButton) soundButton.addEventListener("click", () => this.toggleSound());
+      this.renderSound();
       this.policy = new MacMonitorQuality.AdaptiveQuality(mode, Date.now());
       this.generation = 0; this.closed = false; this.failures = 0;
       this.pc = null; this.resource = null; this.timer = null; this.retry = null; this.abort = null; this.authAbort = null;
@@ -25,6 +32,25 @@
       } catch { if (!this.closed && !this.suspended && generation === this.generation) this.status.textContent = "인증 확인 실패 · 상위 화면에서 다시 연결하세요."; }
       finally { clearTimeout(timeout); if (this.authAbort === authAbort) this.authAbort = null; }
     }
+    // Appended to every status line while the browser made us give up sound, so the hint is
+    // not lost to the next status update.
+    soundNote() { return this.soundFallback && this.video.muted !== false ? " · 소리 켜기를 누르면 소리가 납니다" : ""; }
+    renderSound() {
+      if (!this.soundButton) return;
+      const on = this.video.muted === false;
+      this.soundButton.textContent = on ? "소리 끄기" : "소리 켜기";
+      this.soundButton.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+    toggleSound() {
+      const unmute = this.video.muted !== false;
+      this.video.muted = !unmute;
+      this.soundWanted = unmute;
+      if (unmute) this.soundFallback = false;
+      try { localStorage.setItem("macmonitor-live-sound", unmute ? "on" : "off"); } catch { /* preference lasts for this page */ }
+      // The tap is the user gesture browsers want before playing with sound.
+      if (unmute && this.video.paused) this.video.play().catch(() => {});
+      this.renderSound();
+    }
     sessionURL(location, endpoint) {
       if (!location) throw new Error("영상 세션 주소가 없습니다.");
       const url = new URL(location, endpoint);
@@ -45,7 +71,7 @@
       this.removeSession(this.resource); this.resource = null;
       this.video.pause(); this.video.srcObject = null;
       this.previous = null; this.progress = null; this.goodTicks = 0; this.ticks = 0;
-      this.hasPlayed = false; this.autoplayBlocked = false;
+      this.hasPlayed = false; this.autoplayBlocked = false; this.soundFallback = false;
     }
     close() { if (this.closed) return; this.closed = true; this.generation++; this.clearCurrent(); }
     suspend() { if (this.closed || this.suspended) return; this.suspended = true; this.generation++; this.clearCurrent(); this.status.textContent = "백그라운드 · 영상 수신 일시 중단"; }
@@ -84,11 +110,25 @@
       try {
         const pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: "max-bundle" }); this.pc = pc;
         pc.addTransceiver("video", { direction: "recvonly" });
+        pc.addTransceiver("audio", { direction: "recvonly" });
         pc.ontrack = (event) => {
           if (this.closed || generation !== this.generation) return;
+          if (event.track.kind === "audio" && this.video.srcObject) return;
           this.video.srcObject = event.streams[0] || new MediaStream([event.track]);
+          this.video.muted = !this.soundWanted;
+          this.renderSound();
+          const blocked = () => { this.autoplayBlocked = true; this.status.textContent = "영상의 재생 버튼을 눌러주세요."; };
           this.video.play().then(() => { if (generation === this.generation) this.hasPlayed = true; }).catch(() => {
-            if (generation === this.generation) { this.autoplayBlocked = true; this.status.textContent = "영상의 재생 버튼을 눌러주세요."; }
+            if (generation !== this.generation) return;
+            if (this.video.muted) { blocked(); return; }
+            this.video.muted = true;
+            this.soundFallback = true;
+            this.renderSound();
+            this.video.play().then(() => {
+              if (generation !== this.generation) return;
+              this.hasPlayed = true;
+              this.status.textContent = `${this.policy.automatic ? "자동 · " : ""}${profile.label} · 수신 대기${this.soundNote()}`;
+            }).catch(() => { if (generation === this.generation) blocked(); });
           });
         };
         pc.onconnectionstatechange = () => {
@@ -117,7 +157,7 @@
         if (generation !== this.generation || this.closed) return;
         this.lastProgress = Date.now();
         this.startedAt = Date.now();
-        this.status.textContent = `${this.policy.automatic ? "자동 · " : ""}${profile.label} · 수신 대기`;
+        this.status.textContent = `${this.policy.automatic ? "자동 · " : ""}${profile.label} · 수신 대기${this.soundNote()}`;
         let sampling = false;
         this.timer = setInterval(async () => {
           if (sampling || generation !== this.generation) return;
@@ -181,7 +221,7 @@
       if (!playing) { this.policy.resetEvidence(); this.goodTicks = 0; this.status.textContent = "재생 대기 또는 일시정지 · 재생 버튼을 눌러주세요."; return; }
       const fmt = (value, suffix) => Number.isFinite(value) ? `${value.toFixed(1)}${suffix}` : "—";
       const profile = this.policy.profile;
-      this.status.textContent = `${this.policy.automatic ? "자동 · " : ""}${profile.label}${stalled ? " · 수신 정지" : " · 재생 중"}`;
+      this.status.textContent = `${this.policy.automatic ? "자동 · " : ""}${profile.label}${stalled ? " · 수신 정지" : " · 재생 중"}${this.soundNote()}`;
       this.metrics.textContent = `수신 ${fmt(measurement?.kbps, " kbps")} · ${fmt(measurement?.fps, " fps")} · 손실 ${fmt(measurement?.loss * 100, "%")} · RTT ${fmt(measurement?.rtt * 1000, " ms")}`;
       const next = this.policy.sample({ ...measurement, stalled }, Date.now());
       if (next) { this.connect(); return; }
@@ -195,7 +235,8 @@
   if (video) {
     const requested = new URLSearchParams(globalThis.location.search).get("quality");
     const mode = ["auto", "original", "balanced", "low"].includes(requested) ? requested : "auto";
-    const player = new LivePlayer(video, document.querySelector("#player-status"), document.querySelector("#player-metrics"), mode);
+    const player = new LivePlayer(video, document.querySelector("#player-status"), document.querySelector("#player-metrics"), mode,
+      document.querySelector("#sound-toggle"));
     let inPageCache = false;
     globalThis.addEventListener("pagehide", (event) => {
       if (event.persisted) { inPageCache = true; player.suspend(); }

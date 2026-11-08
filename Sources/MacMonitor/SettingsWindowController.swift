@@ -9,6 +9,7 @@ final class SettingsWindowController: NSWindowController {
         target: nil,
         action: nil
     )
+    private let audioCheckbox = NSButton(checkboxWithTitle: "소리 녹음·전송 (마이크, 다음 카메라 시작부터)", target: nil, action: nil)
     private let hostsField = NSTextField()
     private let bitrateField = NSTextField()
     private let thresholdField = NSTextField()
@@ -31,7 +32,7 @@ final class SettingsWindowController: NSWindowController {
 
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 840),
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 870),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -67,6 +68,7 @@ final class SettingsWindowController: NSWindowController {
         }
         let grid = NSGridView(views: [
             row("카메라", cameraPopup),
+            row("소리", audioCheckbox),
             row("앱 실행", launchAtLoginCheckbox),
             row("외부 WebRTC 호스트", hostsField),
             row("비디오 비트레이트 (kbps)", bitrateField),
@@ -141,6 +143,7 @@ final class SettingsWindowController: NSWindowController {
             cameraPopup.selectItem(at: 0)
         }
         hostsField.stringValue = configuration.externalWebRTCHosts.joined(separator: ", ")
+        audioCheckbox.state = configuration.audioEnabled ? .on : .off
         launchAtLoginCheckbox.state = LaunchAtLoginManager.isEnabled ? .on : .off
         bitrateField.integerValue = configuration.videoBitrateKbps
         thresholdField.doubleValue = configuration.motionPixelThreshold
@@ -195,7 +198,8 @@ final class SettingsWindowController: NSWindowController {
                 sleepMinute: minute(in: sleepPicker), wakeMinute: minute(in: wakePicker),
                 mode: ScheduledRestMode(rawValue: restModePopup.selectedItem?.representedObject as? String ?? "") ?? .systemSleep),
             motionRegions: motionRegions,
-            slimMode: SlimModeSettings(enabled: slimModeCheckbox.state == .on, wakeIntervalMinutes: wakeIntervalPopup.selectedTag())
+            slimMode: SlimModeSettings(enabled: slimModeCheckbox.state == .on, wakeIntervalMinutes: wakeIntervalPopup.selectedTag()),
+            audioEnabled: audioCheckbox.state == .on
         )
         var appliedSystemSchedule = false
         do {

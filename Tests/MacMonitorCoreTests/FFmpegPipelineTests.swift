@@ -4,17 +4,50 @@ import XCTest
 @testable import MacMonitorCore
 
 final class FFmpegPipelineTests: XCTestCase {
-    private func teeTarget(recordingEnabled: Bool, segmentSeconds: Int = 5, prefix: String = "segment") throws -> String {
-        let pipeline = FFmpegPipeline(configuration: FFmpegPipelineConfiguration(
+    private func pipeline(recordingEnabled: Bool, segmentSeconds: Int = 5, prefix: String = "segment",
+                          audio: FFmpegAudioConfiguration? = nil) throws -> FFmpegPipeline {
+        FFmpegPipeline(configuration: FFmpegPipelineConfiguration(
             executableURL: URL(fileURLWithPath: "/usr/local/bin/ffmpeg"),
             spoolDirectory: URL(fileURLWithPath: "/tmp/spool"),
             rtspPublishURL: try XCTUnwrap(URL(string: "rtsp://127.0.0.1:8554/live")),
             logURL: URL(fileURLWithPath: "/tmp/ffmpeg.log"),
             segmentSeconds: segmentSeconds,
             segmentFilePrefix: prefix,
-            recordingEnabled: recordingEnabled
+            recordingEnabled: recordingEnabled,
+            audio: audio
         ))
-        return try XCTUnwrap(pipeline.arguments().last)
+    }
+
+    private func teeTarget(recordingEnabled: Bool, segmentSeconds: Int = 5, prefix: String = "segment") throws -> String {
+        try XCTUnwrap(pipeline(recordingEnabled: recordingEnabled, segmentSeconds: segmentSeconds, prefix: prefix).arguments().last)
+    }
+
+    func testSoundIsReadFromANamedPipeAndEncodedOnceForEachOutput() throws {
+        let arguments = try pipeline(recordingEnabled: true, audio: FFmpegAudioConfiguration()).arguments(audioInput: "/tmp/runtime/audio.pcm")
+        let joined = arguments.joined(separator: " ")
+        XCTAssertTrue(joined.contains("-i pipe:0 -f s16le -ar 48000 -ac 1 -i /tmp/runtime/audio.pcm"), "video first, then the raw PCM pipe")
+        XCTAssertTrue(joined.contains("-map 0:v:0 -map 1:a:0 -c:a:0 libopus -b:a:0 48k -map 1:a:0 -c:a:1 aac -b:a:1 64k"))
+        XCTAssertFalse(arguments.contains("-an"))
+        let target = try XCTUnwrap(arguments.last)
+        XCTAssertTrue(target.contains("onfail=abort:select='v:0,a:0']rtsp://"), "the live stream gets the Opus track")
+        XCTAssertTrue(target.contains("onfail=abort:select='v:0,a:1']/tmp/spool/segment-"), "the files get the AAC track")
+        XCTAssertTrue(joined.contains("-realtime:v true -allow_sw:v 1"), "encoder-private options are video-only now that audio encoders exist")
+    }
+
+    func testLiveOnlySoundHasASingleOpusTrack() throws {
+        let arguments = try pipeline(recordingEnabled: false, audio: FFmpegAudioConfiguration()).arguments(audioInput: "/tmp/runtime/audio.pcm")
+        XCTAssertFalse(arguments.contains("aac"), "no file, no AAC encode")
+        XCTAssertEqual(arguments.filter { $0 == "libopus" }.count, 1)
+        let target = try XCTUnwrap(arguments.last)
+        XCTAssertFalse(target.contains("|"))
+        XCTAssertTrue(target.contains("select='v:0,a:0'"))
+    }
+
+    func testWithoutAPipeTheCommandStaysSilentEvenWhenSoundIsConfigured() throws {
+        let arguments = try pipeline(recordingEnabled: true, audio: FFmpegAudioConfiguration()).arguments()
+        XCTAssertTrue(arguments.contains("-an"))
+        XCTAssertFalse(arguments.contains("libopus"))
+        XCTAssertFalse(try XCTUnwrap(arguments.last).contains("select="), "a tee without audio keeps the proven single-stream shape")
     }
 
     func testRemoteRecordingWritesLongClipsUnderTheRemoteName() throws {

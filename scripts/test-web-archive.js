@@ -40,12 +40,12 @@ async function fixture(mediaOnline, options = {}) {
     "recording-from", "recording-to", "recording-filter", "clear-recording-filter", "recording-results", "recording-timezone",
     "previous-recordings", "next-recordings", "recording-page", "protected-only", "protection-summary",
     "protection-warning", "protection-message", "retention-warning", "live-quality", "live-waiting", "recording-mode",
-    "record-hours", "record-start", "record-stop", "record-state"];
+    "record-hours", "record-start", "record-stop", "record-state", "audio-state"];
   const elements = Object.fromEntries(ids.map((id) => [id, new Element()]));
   elements["recording-template"].content = { firstElementChild: { cloneNode() {
     const card = new Element();
     card.video = new Element();
-    const fields = Object.fromEntries([".recording-date", ".recording-size", ".recording-summary", ".recording-thumbnail", ".thumbnail-placeholder", ".recording-download", ".recording-protect", ".recording-protection-state"]
+    const fields = Object.fromEntries([".recording-date", ".recording-size", ".recording-summary", ".recording-thumbnail", ".thumbnail-placeholder", ".recording-download", ".recording-protect", ".recording-protection-state", ".recording-delete"]
       .map((selector) => [selector, new Element()]));
     card.image = fields[".recording-thumbnail"];
     card.querySelector = (selector) => selector === "video" ? card.video : fields[selector];
@@ -63,6 +63,7 @@ async function fixture(mediaOnline, options = {}) {
     demands: [], failDemand: false, timeout: null, now: 1000,
     recording: null, recordingUntil: "2026-11-08T13:00:00Z", recordingStarts: [], recordingStops: [], failRecording: false,
     confirmUnprotect: true, protectionRequests: [], blockProtection: false, finishProtection: null, failProtection: false,
+    deleteRequests: [], failDelete: false,
     recordingRequests: [], blockRecordings: false, pendingRecordings: [], recordings: [
       { id: "example.mp4", startedAt: "2026-10-20T03:00:00Z", sizeBytes: 1024, url: "/recordings/example.mp4",
         protected: false, protectionSupported: true, protectionAvailable: true,
@@ -99,6 +100,13 @@ async function fixture(mediaOnline, options = {}) {
         protectedCount: protectedItems.length, protectedBytes: protectedItems.reduce((sum, item) => sum + item.sizeBytes, 0) };
       if (api.blockRecordings) return new Promise((resolve) => api.pendingRecordings.push(() => resolve(response(result))));
       return response(result);
+    }
+    if (options.method === "DELETE" && url.startsWith("/api/recordings/")) {
+      api.deleteRequests.push({ url, options });
+      if (api.failDelete) return response({ error: "보호된 녹화는 삭제할 수 없습니다. 먼저 보호를 해제하세요." }, 409);
+      const id = decodeURIComponent(url.split("/")[3]);
+      api.recordings = api.recordings.filter((item) => item.id !== id);
+      return { ok: true, status: 204, headers: { get: () => "" } };
     }
     if (url.endsWith("/protection")) {
       api.protectionRequests.push({ url, options });
@@ -240,6 +248,45 @@ test("logout releases media and a late archive response cannot restore private c
   await flush();
   assert.equal(elements.recordings.children.length, 0);
   assert.equal(elements.app.hidden, true);
+});
+
+test("delete asks first, sends CSRF, stays disabled for protected recordings and refreshes the list", async () => {
+  const { elements, api } = await fixture(false);
+  api.recordings.push({ id: "keep.mp4", startedAt: "2026-10-21T03:00:00Z", sizeBytes: 2048, url: "/recordings/keep.mp4",
+    protected: true, protectionSupported: true, protectionAvailable: true,
+    thumbnailURL: "/api/recordings/keep.mp4/thumbnail", downloadURL: "/recordings/keep.mp4?download=1" });
+  elements["refresh-recordings"].listeners.click();
+  await flush();
+  assert.equal(elements.recordings.children.length, 2);
+  const protectedCard = elements.recordings.children.find((card) => card.querySelector(".recording-protect").textContent === "보호 해제");
+  assert.equal(protectedCard.querySelector(".recording-delete").disabled, true, "a protected recording is unprotected first, as a second look");
+  const card = elements.recordings.children.find((item) => item !== protectedCard);
+  assert.equal(card.querySelector(".recording-delete").disabled, false);
+  api.confirmUnprotect = false;
+  await card.querySelector(".recording-delete").listeners.click();
+  await flush();
+  assert.equal(api.deleteRequests.length, 0, "cancelling the dialog deletes nothing");
+  api.confirmUnprotect = true;
+  await card.querySelector(".recording-delete").listeners.click();
+  await flush();
+  assert.equal(api.deleteRequests.length, 1);
+  assert.equal(api.deleteRequests[0].url, "/api/recordings/example.mp4");
+  assert.equal(api.deleteRequests[0].options.method, "DELETE");
+  assert.equal(api.deleteRequests[0].options.headers.get("X-CSRF-Token"), "session-one");
+  assert.equal(elements.recordings.children.length, 1, "the list is refreshed without the deleted recording");
+  assert.match(elements["protection-message"].textContent, /삭제했습니다/);
+
+  api.recordings.push({ id: "again.mp4", startedAt: "2026-10-22T03:00:00Z", sizeBytes: 512, url: "/recordings/again.mp4",
+    protected: false, protectionSupported: true, protectionAvailable: true,
+    thumbnailURL: "/api/recordings/again.mp4/thumbnail", downloadURL: "/recordings/again.mp4?download=1" });
+  elements["refresh-recordings"].listeners.click();
+  await flush();
+  api.failDelete = true;
+  const failing = elements.recordings.children.find((item) => item.querySelector(".recording-delete").disabled === false);
+  await failing.querySelector(".recording-delete").listeners.click();
+  await flush();
+  assert.equal(elements.recordings.children.length, 2, "a refused delete leaves the card");
+  assert.match(elements["protection-message"].textContent, /먼저 보호를 해제하세요/);
 });
 
 test("protect writes explicit state with CSRF, prevents duplicate clicks and survives list refresh", async () => {
@@ -467,6 +514,24 @@ test("the recording cell tells remote recording from motion recording", async ()
   api.monitoring = running("live");
   await tick();
   assert.equal(elements["recording-mode"].textContent, "꺼짐");
+});
+
+test("the sound cell reports on, a missing microphone permission, and off", async () => {
+  const { elements, api, tick } = await fixture(false, { monitoring: standby() });
+  const running = (audio, audioDetail) => standby({ state: "running", frameState: "receiving", expectingFrames: true, captureMode: "live", captureFPS: 15, audio, audioDetail });
+  api.mediaOnline = true;
+  api.monitoring = running("on");
+  await tick();
+  assert.equal(elements["audio-state"].textContent, "켜짐");
+  api.monitoring = running("unavailable", "마이크 권한 필요");
+  await tick();
+  assert.equal(elements["audio-state"].textContent, "없음 · 마이크 권한 필요");
+  api.monitoring = running("off");
+  await tick();
+  assert.equal(elements["audio-state"].textContent, "꺼짐 (설정)");
+  api.monitoring = standby();
+  await tick();
+  assert.equal(elements["audio-state"].textContent, "—");
 });
 
 test("remote recording starts for the chosen hours, shows the remaining time from the app's view, and stops on demand", async () => {

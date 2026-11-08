@@ -12,7 +12,15 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
     private var starting = false
     private var started = false
     private var captureMode: CaptureMode = .recording
+    private var audioEncoderProblem: String?
     private let healthReporter: MonitoringHealthReporter?
+
+    /// Why the running capture has no sound although the owner turned it on, or nil.
+    public var audioProblem: String? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return audioEncoderProblem
+    }
 
     public init(healthReporter: MonitoringHealthReporter? = nil) {
         self.healthReporter = healthReporter
@@ -58,6 +66,19 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
             ffmpegURL: ffmpegURL
         )
         let reporter = healthReporter
+        // Sound is optional: without the encoders, or with a command FFmpeg rejects, the camera
+        // runs video-only and the status says why. Probed once per FFmpeg binary.
+        var audio: FFmpegAudioConfiguration?
+        var audioProblem: String?
+        if configuration.audioEnabled {
+            let capabilities = FFmpegCapabilities.cached(for: ffmpegURL)
+            if capabilities.supportsAudio {
+                audio = FFmpegAudioConfiguration()
+            } else {
+                audioProblem = capabilities.audioProblem
+            }
+        }
+        reporter?.setAudioEncoder(problem: audioProblem)
         let maximumAge = TimeInterval(configuration.retentionDays) * 86_400
         let maximumBytes = Int64(configuration.retentionMaxGigabytes * 1_073_741_824)
         let minimumFreeBytes = Int64(configuration.minimumFreeGigabytes * 1_073_741_824)
@@ -108,7 +129,8 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
                 bitrateKbps: configuration.videoBitrateKbps,
                 segmentSeconds: mode == .timed ? Int(RecordingDemand.clipDuration) : 5,
                 segmentFilePrefix: mode == .timed ? "remote" : "segment",
-                recordingEnabled: mode.writesRecordings
+                recordingEnabled: mode.writesRecordings,
+                audio: audio
             )
         )
         mediaServer.failureHandler = { [weak self] error in
@@ -151,9 +173,17 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
         self.retention = retention
         self.mediaServer = mediaServer
         self.encoder = encoder
+        audioEncoderProblem = audioProblem
         started = true
         starting = false
         stateLock.unlock()
+    }
+
+    public func consume(audioSampleBuffer sampleBuffer: CMSampleBuffer) {
+        stateLock.lock()
+        let encoder = started ? self.encoder : nil
+        stateLock.unlock()
+        encoder?.consume(audioSampleBuffer: sampleBuffer)
     }
 
     public func consume(sampleBuffer: CMSampleBuffer) {

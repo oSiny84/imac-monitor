@@ -57,7 +57,7 @@ final class FFmpegRecordingEventMerger: RecordingEventMerging {
         process.arguments = [
             "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
             "-f", "concat", "-safe", "0", "-i", concatList.path,
-            "-map", "0:v:0", "-c", "copy", "-movflags", "+faststart",
+            "-map", "0:v:0", "-map", "0:a?", "-c", "copy", "-movflags", "+faststart",
             partialOutput.path
         ]
         process.standardOutput = nullHandle

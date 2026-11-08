@@ -216,6 +216,9 @@
     document.querySelector("#capture-fps").textContent = fps;
     document.querySelector("#recording-mode").textContent = !fresh ? "—"
       : health.captureMode === "recording" ? "켜짐 · 움직임" : health.captureMode === "timed" ? "켜짐 · 원격" : "꺼짐";
+    document.querySelector("#audio-state").textContent = !fresh ? "—"
+      : health.audio === "on" ? "켜짐" : health.audio === "unavailable" ? `없음 · ${health.audioDetail || "원인 미확인"}`
+      : health.audio === "off" ? "꺼짐 (설정)" : "—";
     document.querySelector("#last-frame").textContent = formatTime(health?.lastFrameAt);
     document.querySelector("#last-motion").textContent = formatTime(health?.lastMotionAt);
     document.querySelector("#last-recording").textContent = formatTime(health?.lastRecordingAt);
@@ -314,6 +317,30 @@
               method: "PUT", body: JSON.stringify({ protected: targetProtected }),
             });
             if (state.csrfToken === session) protectionMessage.textContent = targetProtected ? "중요 녹화로 보호했습니다. 자동 삭제에서 제외됩니다." : "보호를 해제했습니다. 이제 자동 정리 대상입니다.";
+          } catch (error) {
+            if (state.csrfToken === session) protectionMessage.textContent = error.message;
+          } finally {
+            writes.delete(recording.id);
+            if (state.csrfToken === session) refreshRecordings();
+          }
+        });
+        // Protected recordings cannot be deleted here: unprotecting first is the second look
+        // that a tap on a phone otherwise lacks.
+        const remove = card.querySelector(".recording-delete");
+        const protectedNow = recording.protected && recording.protectionAvailable;
+        remove.disabled = protectedNow || !recording.protectionAvailable || !recording.protectionSupported || state.protectionWrites.has(recording.id);
+        remove.title = protectedNow ? "보호된 녹화는 먼저 보호를 해제해야 삭제할 수 있습니다" : "";
+        remove.addEventListener("click", async () => {
+          if (remove.disabled || state.protectionWrites.has(recording.id)) return;
+          if (!confirm("이 녹화를 삭제할까요? 되돌릴 수 없습니다. 필요하면 먼저 다운로드하세요.")) return;
+          const writes = state.protectionWrites;
+          writes.add(recording.id);
+          remove.disabled = true;
+          protect.disabled = true;
+          protectionMessage.textContent = "삭제 중…";
+          try {
+            await request(`/api/recordings/${encodeURIComponent(recording.id)}`, { method: "DELETE" });
+            if (state.csrfToken === session) protectionMessage.textContent = "녹화를 삭제했습니다.";
           } catch (error) {
             if (state.csrfToken === session) protectionMessage.textContent = error.message;
           } finally {

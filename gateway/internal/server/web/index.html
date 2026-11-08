@@ -95,6 +95,7 @@
         <p id="retention-warning" class="archive-notice" role="status" hidden></p>
         <dl class="monitoring-grid">
           <div><dt>녹화</dt><dd id="recording-mode">—</dd></div>
+          <div><dt>소리</dt><dd id="audio-state">—</dd></div>
           <div><dt>실제 수신 FPS</dt><dd id="capture-fps">—</dd></div>
           <div><dt>마지막 프레임</dt><dd id="last-frame">—</dd></div>
           <div><dt>마지막 움직임</dt><dd id="last-motion">—</dd></div>
@@ -115,7 +116,7 @@
         </span>
         <span class="recording-description"><span class="recording-date"></span><span class="recording-size"></span><span class="recording-protection-state archive-hint"></span><span class="archive-hint">눌러서 재생 / 닫기</span></span>
       </button>
-      <div class="recording-actions"><button class="recording-protect secondary" type="button">중요 녹화로 보호</button><a class="recording-download secondary" download>원본 MP4 다운로드</a></div>
+      <div class="recording-actions"><button class="recording-protect secondary" type="button">중요 녹화로 보호</button><a class="recording-download secondary" download>원본 MP4 다운로드</a><button class="recording-delete secondary danger" type="button">삭제</button></div>
       <video controls preload="none" playsinline hidden></video>
     </article>
   </template>

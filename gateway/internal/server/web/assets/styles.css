@@ -67,6 +67,9 @@ form button { width: 100%; margin-top: 1rem; }
 .recording-description { display: grid; gap: .4rem; flex: 1; }
 .recording-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; padding: 0 1rem .75rem; }
 .recording-protect { font-size: .85rem; }
+.recording-delete { font-size: .85rem; }
+.danger { color: #ffd4d4; background: #4a2020; }
+.danger:disabled { color: #8d7a7a; background: #2a2222; cursor: not-allowed; }
 .recording-protection-state.protected { color: #e1cfa4; }
 .protected-filter { display: flex; gap: .5rem; align-items: center; min-height: 3rem; font-size: .85rem; }
 .protected-filter input { width: 1.1rem; min-height: 1.1rem; margin: 0; accent-color: #83e2ad; }

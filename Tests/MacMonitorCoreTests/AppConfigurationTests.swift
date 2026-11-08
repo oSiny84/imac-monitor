@@ -33,6 +33,16 @@ final class AppConfigurationTests: XCTestCase {
         XCTAssertThrowsError(try AppConfiguration(slimMode: SlimModeSettings(wakeIntervalMinutes: 61)).validate())
     }
 
+    func testSoundIsOnByDefaultAndCanBeTurnedOff() throws {
+        let json = #"{"externalWebRTCHosts":[],"videoBitrateKbps":1200,"motionPixelThreshold":18,"motionChangedFraction":0.025,"retentionDays":14,"retentionMaxGigabytes":20,"minimumFreeGigabytes":5}"#
+        let legacy = try JSONDecoder().decode(AppConfiguration.self, from: Data(json.utf8))
+        XCTAssertTrue(legacy.audioEnabled, "settings written before sound existed get sound on")
+        let silent = AppConfiguration(audioEnabled: false)
+        let decoded = try JSONDecoder().decode(AppConfiguration.self, from: JSONEncoder().encode(silent))
+        XCTAssertFalse(decoded.audioEnabled)
+        XCTAssertEqual(decoded, silent)
+    }
+
     func testLiveStandbyChoiceSurvivesRoundTrip() throws {
         let original = AppConfiguration(liveStandby: false)
         let decoded = try JSONDecoder().decode(AppConfiguration.self, from: JSONEncoder().encode(original))

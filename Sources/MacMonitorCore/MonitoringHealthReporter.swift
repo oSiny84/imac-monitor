@@ -27,6 +27,9 @@ struct MonitoringHealthSnapshot: Codable {
     let liveStandby: Bool
     let captureMode: String
     let slimMode: Bool
+    /// "on", "off" or "unavailable" while the camera runs; absent otherwise.
+    let audio: String?
+    let audioDetail: String?
 }
 
 /// A small private, atomically replaced status file is read by the independent
@@ -54,6 +57,7 @@ public final class MonitoringHealthReporter {
     private var liveStandby = false
     private var captureMode: CaptureMode = .off
     private var slimMode = false
+    private var audioEncoderProblem: String?
 
     public var onStall: (() -> Void)? {
         get { lock.lock(); defer { lock.unlock() }; return stallHandler }
@@ -96,6 +100,15 @@ public final class MonitoringHealthReporter {
         guard pauseReason != reason else { lock.unlock(); return }
         pauseReason = reason
         updateExpectation()
+        lock.unlock()
+        queue.async { [weak self] in self?.tick() }
+    }
+
+    /// Why FFmpeg cannot encode sound, or nil. Set when the pipeline starts.
+    public func setAudioEncoder(problem: String?) {
+        lock.lock()
+        guard audioEncoderProblem != problem else { lock.unlock(); return }
+        audioEncoderProblem = problem
         lock.unlock()
         queue.async { [weak self] in self?.tick() }
     }
@@ -210,6 +223,17 @@ public final class MonitoringHealthReporter {
             }
             detail = coordinatorState.displayText(for: captureMode)
         }
+        var audio: String?
+        var audioDetail: String?
+        if pauseReason == nil, case let .running(info) = coordinatorState {
+            if let audioEncoderProblem {
+                audio = AudioCaptureState.unavailable(audioEncoderProblem).statusValue
+                audioDetail = audioEncoderProblem
+            } else {
+                audio = info.audio.statusValue
+                audioDetail = info.audio.reason
+            }
+        }
         return MonitoringHealthSnapshot(schemaVersion: 1, updatedAt: now,
             state: state, detail: detail, expectingFrames: activity.isActive,
             captureStartedAt: captureStartedAt, lastFrameAt: lastFrameAt,
@@ -218,7 +242,7 @@ public final class MonitoringHealthReporter {
             lastRecordingName: lastRecordingName, diskFreeBytes: nil,
             watchdogRecoveries: watchdogRecoveries, lastRecoveryAt: lastRecoveryAt,
             retentionWarning: retentionWarning, liveStandby: liveStandby, captureMode: captureMode.rawValue,
-            slimMode: slimMode)
+            slimMode: slimMode, audio: audio, audioDetail: audioDetail)
     }
 
     private func write(_ snapshot: MonitoringHealthSnapshot) {

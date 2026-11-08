@@ -20,6 +20,10 @@ final class RemoteStreamProfilesTests: XCTestCase {
         XCTAssertTrue(commands[0].contains("'fps=10,scale=854:480'"))
         XCTAssertTrue(commands[1].contains("'fps=8,scale=640:360'"))
         XCTAssertTrue(commands[0].hasSuffix("'rtsp://127.0.0.1:8554/live-balanced'"))
+        for command in commands {
+            XCTAssertTrue(command.contains("'-map' '0:a?' '-c:a' 'copy'"), "sound passes through the re-encoded profiles untouched")
+            XCTAssertFalse(command.contains("'-an'"))
+        }
         XCTAssertTrue(commands[1].hasSuffix("'rtsp://127.0.0.1:8554/live-low'"))
         for command in commands {
             XCTAssertTrue(command.contains("'-i' 'rtsp://127.0.0.1:8554/live'"))

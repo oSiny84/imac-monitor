@@ -3,4 +3,6 @@ body { margin: 0; overflow: hidden; }
 video { display: block; width: 100vw; height: 100vh; object-fit: contain; }
 .overlay { position: fixed; top: .5rem; left: .5rem; right: .5rem; pointer-events: none; text-shadow: 0 1px 3px #000; }
 .overlay p { width: fit-content; max-width: 100%; margin: 0 0 .25rem; padding: .3rem .5rem; border-radius: .35rem; background: #000a; font-size: clamp(.65rem, 2vw, .85rem); }
+.sound-toggle { pointer-events: auto; cursor: pointer; margin-top: .25rem; padding: .45rem .8rem; border: 1px solid #ffffff40; border-radius: .5rem; background: #000a; color: #fff; font: inherit; font-size: clamp(.75rem, 2.2vw, .9rem); }
+.sound-toggle[aria-pressed="true"] { background: #83e2ad; color: #06130c; border-color: transparent; }
 @media (max-width: 480px) { #player-metrics { display: none; } }

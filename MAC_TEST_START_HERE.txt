@@ -159,7 +159,10 @@ GitHub 다운로드가 504 등으로 실패하면 GitHub API 주소로 한 번 �
 - 슬림 모드: scripts/enable-slim-mode.sh 실행 뒤 설정에서 슬림 모드(5분 간격)를 켭니다.
   Mac이 잠들고 5분 뒤 스스로 깨어나는지, 그때 화면이 켜지는지를 꼭 기록해 주세요.
   잠든 동안 텔레그램으로 카메라를 보내면 다음 깨어남에 켜져야 합니다.
-- 자세한 절차: docs/MAC_VALIDATION.md M·N·O절. 설계와 미확인 목록: docs/FEATURE_8_SLIM_MODE_CHAT_SCHEDULE.md
+- 소리: 첫 카메라 시작 때 마이크 권한을 허용합니다. 웹 실시간 화면의 소리 켜기를 누르면 소리가 나야 하고,
+  녹화 파일을 재생해도 소리가 나야 합니다. 손뼉으로 소리와 영상이 맞는지 봅니다.
+- 삭제: 녹화 탭 카드의 삭제 버튼으로 지우고, 보호한 녹화는 삭제가 비활성인지 봅니다.
+- 자세한 절차: docs/MAC_VALIDATION.md M·N·O·P·Q절. 설계와 미확인 목록: docs/FEATURE_8_SLIM_MODE_CHAT_SCHEDULE.md, docs/FEATURE_9_AUDIO_AND_DELETE.md
 
 1~9번 테스트에는 외부 접속 설정이나 포트포워딩이 필요 없습니다.
 휴대폰 원격 시청은 별도로 HTTPS 인증서·웹 비밀번호·공유기 설정 후 테스트합니다.

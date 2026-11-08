@@ -66,6 +66,11 @@ done
 [[ -n "$FFMPEG_PATH" ]] || fail "FFmpeg is missing from an app-visible path (/usr/local/bin or /opt/homebrew/bin); see docs/SETUP_MAC.md"
 "$FFMPEG_PATH" -hide_banner -encoders 2>/dev/null | grep '[[:space:]]h264_videotoolbox[[:space:]]' >/dev/null || \
     fail "FFmpeg does not provide the h264_videotoolbox encoder"
+# Sound is optional, so a missing audio encoder is a warning: the app runs video-only.
+for encoder in libopus aac; do
+    "$FFMPEG_PATH" -hide_banner -encoders 2>/dev/null | grep "[[:space:]]$encoder[[:space:]]" >/dev/null || \
+        echo "warning: FFmpeg lacks $encoder; the camera will run without sound" >&2
+done
 
 if [[ ! -x "$ROOT_DIR/vendor/mediamtx/mediamtx" ]]; then
     fail "MediaMTX is missing. Run ./scripts/fetch-mediamtx.sh first"

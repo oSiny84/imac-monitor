@@ -80,7 +80,8 @@ echo 'PASS: valid candidate replaces original configuration'
 
 # Exercise the actual pipelines extracted from both production scripts.
 for script in build-app.sh diagnose.sh; do
-    check="$(sed -n '/-hide_banner -encoders/ { s/^[[:space:]]*if //; p; }' "$ROOT_DIR/scripts/$script")"
+    # The first -encoders line is the VideoToolbox gate; the audio encoder lines after it only warn.
+    check="$(sed -n '/-hide_banner -encoders/ { s/^[[:space:]]*if //; p; q; }' "$ROOT_DIR/scripts/$script")"
     check="${check#"${check%%[![:space:]]*}"}"
     check="${check% || \\}"
     check="${check%; then}"
@@ -89,6 +90,8 @@ for script in build-app.sh diagnose.sh; do
 #!/bin/bash
 if [[ "$TEST_ENCODERS" != missing ]]; then
     printf ' V..... h264_videotoolbox VideoToolbox H.264 Encoder\n'
+    printf ' A....D libopus              libopus Opus (codec opus)\n'
+    printf ' A....D aac                  AAC (Advanced Audio Coding)\n'
 fi
 awk 'BEGIN { for (i=0; i<100000; i++) print " V..... other_encoder Additional encoder entry" }'
 [[ "$TEST_ENCODERS" != failure ]]

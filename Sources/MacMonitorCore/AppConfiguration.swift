@@ -18,6 +18,8 @@ public struct AppConfiguration: Codable, Equatable {
     public var liveStandby: Bool
     /// Lets the Mac sleep between remote requests and wake on a timer to check for them.
     public var slimMode: SlimModeSettings
+    /// Captures the microphone with the video for the live stream and the files.
+    public var audioEnabled: Bool
 
     public init(
         cameraUniqueID: String? = nil,
@@ -33,7 +35,8 @@ public struct AppConfiguration: Codable, Equatable {
         sleepSchedule: DailySleepSchedule = DailySleepSchedule(),
         motionRegions: MotionRegions = MotionRegions(),
         slimMode: SlimModeSettings = SlimModeSettings(),
-        liveStandby: Bool = true
+        liveStandby: Bool = true,
+        audioEnabled: Bool = true
     ) {
         self.cameraUniqueID = cameraUniqueID
         self.externalWebRTCHosts = externalWebRTCHosts
@@ -49,6 +52,7 @@ public struct AppConfiguration: Codable, Equatable {
         self.motionRegions = motionRegions
         self.slimMode = slimMode
         self.liveStandby = liveStandby
+        self.audioEnabled = audioEnabled
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -58,7 +62,7 @@ public struct AppConfiguration: Codable, Equatable {
         case preRollSeconds, postRollSeconds, sleepSchedule
         // A settings file written by the 2026-11-08 build may still carry a recordingSchedule
         // key; keyed decoding ignores keys that are not listed here.
-        case motionRegions, liveStandby, slimMode
+        case motionRegions, liveStandby, slimMode, audioEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -78,6 +82,8 @@ public struct AppConfiguration: Codable, Equatable {
         motionRegions = try values.decodeIfPresent(MotionRegions.self, forKey: .motionRegions) ?? MotionRegions()
         liveStandby = try values.decodeIfPresent(Bool.self, forKey: .liveStandby) ?? true
         slimMode = try values.decodeIfPresent(SlimModeSettings.self, forKey: .slimMode) ?? SlimModeSettings()
+        // Sound is on unless the owner turned it off; earlier settings files never had the key.
+        audioEnabled = try values.decodeIfPresent(Bool.self, forKey: .audioEnabled) ?? true
     }
 
     public static func loadOrCreate() throws -> AppConfiguration {

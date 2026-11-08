@@ -244,6 +244,12 @@ func (b *Bot) statusText(now time.Time) string {
 	text := "상태: " + describe(status)
 	if status.Available {
 		text += " · " + status.Detail
+		if status.Audio == "unavailable" {
+			text += " · 소리 없음"
+			if status.AudioDetail != "" {
+				text += " (" + status.AudioDetail + ")"
+			}
+		}
 		if status.DiskFreeBytes != nil {
 			text += fmt.Sprintf(" · 디스크 여유 %.1fGB", float64(*status.DiskFreeBytes)/1e9)
 		}

@@ -1,13 +1,37 @@
 import CoreMedia
 import Foundation
 
+/// Whether sound is captured with the video and, if not, why. Sound is optional at every
+/// step: a missing permission, microphone or encoder leaves the camera running without it.
+public enum AudioCaptureState: Equatable {
+    case off
+    case on
+    case unavailable(String)
+
+    /// The value the status file carries; the web and Telegram turn it into words.
+    public var statusValue: String {
+        switch self {
+        case .off: return "off"
+        case .on: return "on"
+        case .unavailable: return "unavailable"
+        }
+    }
+
+    public var reason: String? {
+        if case let .unavailable(reason) = self { return reason }
+        return nil
+    }
+}
+
 public struct CaptureRuntimeInfo: Equatable {
     public let deviceName: String
     public let logURL: URL
+    public let audio: AudioCaptureState
 
-    public init(deviceName: String, logURL: URL) {
+    public init(deviceName: String, logURL: URL, audio: AudioCaptureState = .off) {
         self.deviceName = deviceName
         self.logURL = logURL
+        self.audio = audio
     }
 }
 
