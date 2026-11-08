@@ -242,7 +242,9 @@ final class RecordingRetentionManagerTests: XCTestCase {
             policy: RetentionPolicy(maximumAge: 86400, maximumBytes: 1_000_000, minimumFreeBytes: 0,
                 preRoll: 0, postRoll: 0, segmentDuration: 600, keepEverySegment: true),
             onPromoted: { promoted.append($0.lastPathComponent) })
-        let base = Date(timeIntervalSince1970: 1_793_000_000)
+        // stopAndFinalize applies the age limit against the real clock, so the clip names must
+        // be recent; a fixed date older than maximumAge would be deleted at the finalize step.
+        let base = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
         let names = [0, 600, 1200].map { "schedule-\(timestamp(base.addingTimeInterval(Double($0)))).mp4" }
         for name in names { try Data(name.utf8).write(to: spool.appendingPathComponent(name)) }
 

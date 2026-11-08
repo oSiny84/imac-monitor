@@ -175,8 +175,14 @@ didWake / 시간 간격 감지 ──▶ lastWakeUptime = 지금
 - Node 테스트 47개 통과(새 1개). 스크립트 회귀 검사 23개 통과(새 6개: 텔레그램 설정 3, 제거 스크립트의 슬림 모드 항목 1, sudoers 설치 2).
 - 새 파일과 수정 파일 모두 LF이고 `bash -n`을 통과했습니다.
 
+대상 iMac 첫 빌드 (2026-11-08 19:05):
+
+- Swift 소스 전체가 컴파일되었고 `swift test` 110개 중 109개가 통과했습니다. 새 `RecordingScheduleTests` 8개와 `SlimModePolicyTests` 8개도 통과했습니다.
+- 실패 1개는 테스트 결함이었습니다. `testKeepEverySegmentPromotesEachClosedClipWithoutMotionAndReportsIt`가 클립 이름을 고정 날짜(2026-10-26)로 만들었는데, `stopAndFinalize`는 실제 현재 시각으로 보관 기한(테스트 값 하루)을 적용합니다. 그래서 2026-10-27 이후에는 마지막 단계에서 세 클립이 모두 나이 제한으로 지워졌습니다. 승격 콜백과 빈 spool 검사는 통과해 승격 자체는 정상이었습니다. 같은 파일의 다른 `stopAndFinalize` 테스트처럼 현재 시각을 기준으로 이름을 만들도록 고쳤습니다. 앱은 실제 녹화 시각으로 파일 이름을 만들므로 동작에는 영향이 없습니다.
+- 빌드는 이 실패에서 멈춰 `swift test --sanitize=thread`, 릴리스 빌드, Go 테스트, 진단, 앱 실행은 아직 Mac에서 돌지 않았습니다.
+
 실행하지 못한 검사:
 
-- **Swift 소스와 XCTest 전부.** 새 `RecordingScheduleTests` 8개, `SlimModePolicyTests` 8개, 기존 테스트에 더한 모드·설정·FFmpeg 인자·keep-all 승격·상태 파일 검사. 대상 iMac의 `Build MacMonitor.command`가 첫 검사입니다.
+- **고친 테스트의 Mac 재실행과 그 뒤 빌드 단계 전부.** Windows에는 Swift가 없어 수정 후 실행은 다음 Mac 빌드가 첫 확인입니다.
 - §7의 Mac 확인 항목 전부. 특히 예약 깨우기의 화면 점등과 `pmset` 날짜 형식은 코드가 가정한 것이고 실행으로 확인한 적이 없습니다.
 - 실제 텔레그램 서버. 이 환경에는 봇 토큰이 없어 가짜 서버만 썼습니다.
