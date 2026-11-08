@@ -276,6 +276,31 @@ else
     warn "gateway is not configured; remote HTTPS access will stay disabled"
 fi
 
+TELEGRAM_CONFIG="$APP_SUPPORT/telegram.json"
+if [[ -f "$TELEGRAM_CONFIG" ]]; then
+    check_mode "$TELEGRAM_CONFIG" "600"
+    pass "telegram bot configuration exists; check-config above validated it"
+else
+    warn "telegram bot is not configured; chat commands stay disabled (scripts/configure-telegram.sh)"
+fi
+
+SUDOERS_RULE="${MACMONITOR_SUDOERS_DIR:-/etc/sudoers.d}/macmonitor"
+if [[ -e "$SUDOERS_RULE" ]]; then
+    if sudo -n -l /usr/bin/pmset schedule wake probe >/dev/null 2>&1; then
+        pass "slim mode can schedule wake-ups without a password"
+    else
+        fail "slim mode rule exists but sudo -n rejects it; re-run ./scripts/enable-slim-mode.sh"
+    fi
+else
+    warn "slim mode rule is not installed; run ./scripts/enable-slim-mode.sh before turning slim mode on"
+fi
+if command -v pmset >/dev/null 2>&1; then
+    SLEEP_SETTING="$(pmset -g custom 2>/dev/null | awk '$1 == "sleep" { print $2; exit }')"
+    if [[ "$SLEEP_SETTING" == 0 ]]; then
+        warn "Energy Saver computer sleep is Never; slim mode relies on its own sleep command"
+    fi
+fi
+
 MEDIAMTX_CONFIG="$APP_SUPPORT/Runtime/mediamtx.yml"
 if [[ -f "$MEDIAMTX_CONFIG" ]]; then
     check_mode "$MEDIAMTX_CONFIG" "600"

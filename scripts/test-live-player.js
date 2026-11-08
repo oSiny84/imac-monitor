@@ -391,6 +391,21 @@ test("waiting for a camera is bounded and then falls into normal failure handlin
   assert.match(status.textContent, /영상 연결 응답 404/);
 });
 
+test("after one bounded wait gives up, the next attempt waits again instead of failing at once", async () => {
+  const { player, status, advance, retry } = fixture("original", { api: { postStatus: 404 } });
+  player.start();
+  await flush();
+  advance(46000);
+  await retry();
+  await flush();
+  assert.equal(player.failures, 1);
+  advance(2000);
+  await retry();
+  await flush();
+  assert.equal(status.textContent, "카메라 준비 중…");
+  assert.equal(player.failures, 1, "a new waiting window spends no retry");
+});
+
 test("closing while waiting for the camera cancels the pending retry", async () => {
   const { player, timeouts, peers } = fixture("original", { api: { postStatus: 404 } });
   player.start();

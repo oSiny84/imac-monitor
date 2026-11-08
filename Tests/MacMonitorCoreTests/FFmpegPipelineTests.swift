@@ -4,15 +4,24 @@ import XCTest
 @testable import MacMonitorCore
 
 final class FFmpegPipelineTests: XCTestCase {
-    private func teeTarget(recordingEnabled: Bool) throws -> String {
+    private func teeTarget(recordingEnabled: Bool, segmentSeconds: Int = 5, prefix: String = "segment") throws -> String {
         let pipeline = FFmpegPipeline(configuration: FFmpegPipelineConfiguration(
             executableURL: URL(fileURLWithPath: "/usr/local/bin/ffmpeg"),
             spoolDirectory: URL(fileURLWithPath: "/tmp/spool"),
             rtspPublishURL: try XCTUnwrap(URL(string: "rtsp://127.0.0.1:8554/live")),
             logURL: URL(fileURLWithPath: "/tmp/ffmpeg.log"),
+            segmentSeconds: segmentSeconds,
+            segmentFilePrefix: prefix,
             recordingEnabled: recordingEnabled
         ))
         return try XCTUnwrap(pipeline.arguments().last)
+    }
+
+    func testScheduledRecordingWritesLongClipsUnderTheScheduleName() throws {
+        let target = try teeTarget(recordingEnabled: true, segmentSeconds: 600, prefix: "schedule")
+        XCTAssertTrue(target.contains("segment_time=600:"))
+        XCTAssertTrue(target.contains("/tmp/spool/schedule-"))
+        XCTAssertFalse(target.contains("segment-"), "scheduled clips must not look like motion spool segments")
     }
 
     func testLiveOnlyPublishesTheStreamAndWritesNothingToTheSpool() throws {

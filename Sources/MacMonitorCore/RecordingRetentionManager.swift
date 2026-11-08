@@ -7,6 +7,9 @@ public struct RetentionPolicy {
     public let preRoll: TimeInterval
     public let postRoll: TimeInterval
     public let segmentDuration: TimeInterval
+    /// Scheduled recording keeps every closed clip; motion recording keeps only what a motion
+    /// window claims. The size, age and free-space limits apply either way.
+    public let keepEverySegment: Bool
 
     public init(
         maximumAge: TimeInterval,
@@ -14,7 +17,8 @@ public struct RetentionPolicy {
         minimumFreeBytes: Int64,
         preRoll: TimeInterval = 5,
         postRoll: TimeInterval = 15,
-        segmentDuration: TimeInterval = 5
+        segmentDuration: TimeInterval = 5,
+        keepEverySegment: Bool = false
     ) {
         self.maximumAge = maximumAge
         self.maximumBytes = maximumBytes
@@ -22,6 +26,7 @@ public struct RetentionPolicy {
         self.preRoll = preRoll
         self.postRoll = postRoll
         self.segmentDuration = segmentDuration
+        self.keepEverySegment = keepEverySegment
     }
 }
 
@@ -45,15 +50,18 @@ public final class RecordingRetentionManager {
     private var timer: DispatchSourceTimer?
     private var motionWindows: [MotionWindow] = []
     private let onWarning: ((String?) -> Void)?
+    private let onPromoted: ((URL) -> Void)?
     private var lastWarning: String?
     private var publishedWarning = false
 
-    public init(spoolDirectory: URL, recordingsDirectory: URL, policy: RetentionPolicy, onWarning: ((String?) -> Void)? = nil) {
+    public init(spoolDirectory: URL, recordingsDirectory: URL, policy: RetentionPolicy,
+                onWarning: ((String?) -> Void)? = nil, onPromoted: ((URL) -> Void)? = nil) {
         self.spoolDirectory = spoolDirectory
         self.recordingsDirectory = recordingsDirectory
         self.policy = policy
         eventMerger = nil
         self.onWarning = onWarning
+        self.onPromoted = onPromoted
     }
 
     init(
@@ -61,13 +69,15 @@ public final class RecordingRetentionManager {
         recordingsDirectory: URL,
         policy: RetentionPolicy,
         eventMerger: RecordingEventMerging,
-        onWarning: ((String?) -> Void)? = nil
+        onWarning: ((String?) -> Void)? = nil,
+        onPromoted: ((URL) -> Void)? = nil
     ) {
         self.spoolDirectory = spoolDirectory
         self.recordingsDirectory = recordingsDirectory
         self.policy = policy
         self.eventMerger = eventMerger
         self.onWarning = onWarning
+        self.onPromoted = onPromoted
     }
 
     public func start() throws {
@@ -124,7 +134,10 @@ public final class RecordingRetentionManager {
     /// can only overlap segments starting strictly before `window.end`, so waiting until
     /// this moment computed for `window.end` covers all of them.
     private func promotionDecisionTime(segmentStart: Date) -> Date {
-        segmentStart.addingTimeInterval(policy.segmentDuration + policy.preRoll + 2)
+        // A scheduled clip is long and no later motion window can claim it, so it only waits
+        // for FFmpeg to close the file. Ten seconds covers a late keyframe.
+        if policy.keepEverySegment { return segmentStart.addingTimeInterval(policy.segmentDuration + 10) }
+        return segmentStart.addingTimeInterval(policy.segmentDuration + policy.preRoll + 2)
     }
 
     private func scan(now: Date, finalizing: Bool) {
@@ -132,11 +145,11 @@ public final class RecordingRetentionManager {
             let segmentEnd = file.start.addingTimeInterval(policy.segmentDuration)
             guard finalizing || now >= promotionDecisionTime(segmentStart: file.start) else { continue }
 
-            let keep = motionWindows.contains { window in
+            let keep = policy.keepEverySegment || motionWindows.contains { window in
                 file.start < window.end && segmentEnd > window.start
             }
             if keep {
-                moveToRecordings(file.url)
+                if let destination = moveToRecordings(file.url) { onPromoted?(destination) }
             } else {
                 try? FileManager.default.removeItem(at: file.url)
             }
@@ -179,14 +192,19 @@ public final class RecordingRetentionManager {
         }
     }
 
-    private func moveToRecordings(_ source: URL) {
+    private func moveToRecordings(_ source: URL) -> URL? {
         var destination = recordingsDirectory.appendingPathComponent(source.lastPathComponent)
         if FileManager.default.fileExists(atPath: destination.path) {
             let stem = source.deletingPathExtension().lastPathComponent
             destination = recordingsDirectory
                 .appendingPathComponent("\(stem)-\(UUID().uuidString.prefix(8)).mp4")
         }
-        try? FileManager.default.moveItem(at: source, to: destination)
+        do {
+            try FileManager.default.moveItem(at: source, to: destination)
+            return destination
+        } catch {
+            return nil
+        }
     }
 
     private func enforceRetention(now: Date) {

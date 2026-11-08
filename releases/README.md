@@ -4,7 +4,7 @@
 
 **받을 파일: `MacMonitor-Mac-Test-20261107-152715-495760.zip`** — 원격 실시간 변경까지 포함한 ZIP입니다(123개 파일, SHA256 `8c0774523427c4d3412ebf1d6ede838939ff1229c151c41397509bfe1b58ce6d`). 이보다 이전 ZIP은 받지 마세요. `MacMonitor-Mac-Test-20261023-210002-606130.zip`에는 기능 1~6이, `MacMonitor-Mac-Test-20261020-174546-149165.zip`에는 2026-10-23 빌드 수정이 빠져 있습니다.
 
-이 폴더의 날짜가 가장 최신인 `MacMonitor-Mac-Test-*.zip`을 클릭하고 GitHub의 **Download raw file** 버튼으로 받으세요. GitHub Releases 탭이 아니라 저장소 안의 `releases` 폴더입니다.
+GitHub **Releases** 탭의 최신 `mac-test-*` 릴리즈에 같은 이름의 ZIP이 첨부되어 있습니다. 거기서 받는 것이 가장 쉽습니다. 저장소 안의 이 `releases` 폴더에도 같은 파일이 있으며, 파일을 클릭한 뒤 **Download raw file** 버튼으로 받을 수 있습니다. 두 곳의 파일은 같고 SHA256도 같습니다.
 
 1. Mac에서 ZIP을 풀고 `MacMonitor` 폴더를 통째로 유지합니다.
 2. `MAC_TEST_START_HERE.txt`의 준비 사항과 테스트 순서를 읽습니다.

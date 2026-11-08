@@ -13,7 +13,7 @@ final class DisplaySleepController {
         pending = nil
     }
 
-    private static var secondsSinceInput: TimeInterval {
+    static var secondsSinceInput: TimeInterval {
         let input: [CGEventType] = [.keyDown, .flagsChanged, .mouseMoved,
                                    .leftMouseDown, .rightMouseDown, .otherMouseDown,
                                    .leftMouseDragged, .rightMouseDragged, .scrollWheel]

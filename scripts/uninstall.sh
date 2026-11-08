@@ -57,6 +57,7 @@ else
 fi
 echo "  built app      $APP_DIR"
 echo "  camera permission record (TCC)"
+echo "  slim mode sudoers rule and scheduled wake-ups (asked separately, needs sudo)"
 echo
 
 if [[ "$ASSUME_YES" -ne 1 ]]; then
@@ -74,8 +75,10 @@ if [[ "$ASSUME_YES" -ne 1 ]]; then
 fi
 
 # 1. Stop the app first, otherwise it rewrites Runtime/ while we delete it.
+#    A bare "quit" launches an application that is not running only to quit it
+#    again, so ask whether it is running first.
 if command -v osascript >/dev/null 2>&1; then
-    osascript -e "quit app id \"$BUNDLE_ID\"" >/dev/null 2>&1
+    osascript -e "if application id \"$BUNDLE_ID\" is running then tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1
 fi
 STOPPED=0
 # -x matches the process name only. "pkill -f MacMonitor" would also match this
@@ -181,6 +184,7 @@ if command -v pmset >/dev/null 2>&1; then
     SCHEDULE="$(pmset -g sched 2>/dev/null)"
     if printf '%s\n' "$SCHEDULE" | awk '
         /[Rr]epeating power events/ { seen = 1; next }
+        /[Ss]cheduled power events/ { seen = 0; next }
         seen && NF { found = 1 }
         END { exit found ? 0 : 1 }
     '; then
@@ -210,6 +214,49 @@ if [[ "$REPEAT_FOUND" -eq 1 ]]; then
     fi
 else
     absent "repeating power schedule"
+fi
+
+# 9. Slim mode's sudoers rule and the one-shot wake-ups it scheduled. Both need sudo, so
+#    like the repeating schedule they are shown first and removed only on a separate yes.
+#    pmset lists them as "wake at <date> by 'MacMonitor'" and cancels them by that date text.
+SUDOERS_RULE="${MACMONITOR_SUDOERS_DIR:-/etc/sudoers.d}/macmonitor"
+WAKES=""
+if command -v pmset >/dev/null 2>&1; then
+    WAKES="$(pmset -g sched 2>/dev/null | grep "by 'MacMonitor'" || true)"
+fi
+if [[ -e "$SUDOERS_RULE" || -n "$WAKES" ]]; then
+    echo
+    echo "Slim mode left these on the Mac:"
+    if [[ -e "$SUDOERS_RULE" ]]; then echo "  $SUDOERS_RULE"; fi
+    if [[ -n "$WAKES" ]]; then printf '%s\n' "$WAKES"; fi
+    if [[ -t 0 ]]; then
+        printf 'Remove them? This needs your administrator password. [y/N] '
+        read -r answer
+        case "$answer" in
+            y|Y|yes|YES)
+                if [[ -e "$SUDOERS_RULE" ]]; then
+                    if sudo rm -f "$SUDOERS_RULE"; then
+                        removed "sudoers rule $SUDOERS_RULE"
+                    else
+                        failed "could not remove $SUDOERS_RULE"
+                    fi
+                fi
+                while read -r stamp; do
+                    [[ -n "$stamp" ]] || continue
+                    if sudo pmset schedule cancel wake "$stamp" MacMonitor; then
+                        removed "scheduled wake at $stamp"
+                    else
+                        failed "could not cancel the wake at $stamp; run: sudo pmset schedule cancel wake \"$stamp\" MacMonitor"
+                    fi
+                done < <(printf '%s\n' "$WAKES" | sed -n "s/.*wake at \([0-9/]* [0-9:]*\).*/\1/p")
+                ;;
+            *) absent "slim mode items (left in place)" ;;
+        esac
+    else
+        absent "slim mode items - to remove: sudo rm $SUDOERS_RULE; sudo pmset schedule cancel wake <date> MacMonitor"
+    fi
+else
+    absent "slim mode sudoers rule and scheduled wake-ups"
 fi
 
 echo

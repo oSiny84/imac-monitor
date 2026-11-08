@@ -131,9 +131,13 @@
 
   function renderWaking(health) {
     if (!state.wakingSince) state.wakingSince = Date.now();
-    const message = health.state === "failed" ? "카메라를 켜지 못했습니다 · 자동으로 다시 시도합니다"
-      : Date.now() - state.wakingSince >= 45000 ? "카메라 시작이 늦어지고 있습니다 · Mac과 앱 상태를 확인하세요"
-      : "카메라 켜는 중…";
+    const elapsed = Math.floor((Date.now() - state.wakingSince) / 1000);
+    // The app retries a failed start, in recording mode too, for as long as this view keeps
+    // asking. Its own error text says what went wrong, so the viewer is not left guessing.
+    const reason = String(health.detail || "").replace(/^오류\s*—\s*/, "") || "원인 미확인";
+    const message = health.state === "failed" ? `카메라를 켜지 못했습니다 · ${reason} · 이 화면을 보는 동안 약 30초마다 다시 시도합니다`
+      : elapsed >= 45 ? "카메라 시작이 늦어지고 있습니다 · Mac과 앱 상태를 확인하세요"
+      : elapsed > 0 ? `카메라 켜는 중… ${elapsed}초` : "카메라 켜는 중…";
     mediaStatus.textContent = message;
     mediaStatus.classList.remove("online");
     liveWaiting.textContent = message;
@@ -204,7 +208,8 @@
     monitorDetail.textContent = available ? health.detail : "앱의 촬영 상태를 확인하지 못했습니다. 웹 접속 여부만으로 정상 촬영을 판단할 수 없습니다.";
     const fps = fresh && health.expectingFrames && Number.isFinite(health.captureFPS) ? `${health.captureFPS.toFixed(1)} fps` : "—";
     document.querySelector("#capture-fps").textContent = fps;
-    document.querySelector("#recording-mode").textContent = !fresh ? "—" : health.captureMode === "recording" ? "켜짐" : "꺼짐";
+    document.querySelector("#recording-mode").textContent = !fresh ? "—"
+      : health.captureMode === "recording" ? "켜짐 · 움직임" : health.captureMode === "scheduled" ? "켜짐 · 예약" : "꺼짐";
     document.querySelector("#last-frame").textContent = formatTime(health?.lastFrameAt);
     document.querySelector("#last-motion").textContent = formatTime(health?.lastMotionAt);
     document.querySelector("#last-recording").textContent = formatTime(health?.lastRecordingAt);

@@ -26,6 +26,7 @@ struct MonitoringHealthSnapshot: Codable {
     let retentionWarning: String?
     let liveStandby: Bool
     let captureMode: String
+    let slimMode: Bool
 }
 
 /// A small private, atomically replaced status file is read by the independent
@@ -52,6 +53,7 @@ public final class MonitoringHealthReporter {
     private var retentionWarning: String?
     private var liveStandby = false
     private var captureMode: CaptureMode = .off
+    private var slimMode = false
 
     public var onStall: (() -> Void)? {
         get { lock.lock(); defer { lock.unlock() }; return stallHandler }
@@ -98,11 +100,15 @@ public final class MonitoringHealthReporter {
         queue.async { [weak self] in self?.tick() }
     }
 
-    public func setRemoteState(captureMode: CaptureMode, liveStandby: Bool) {
+    public func setRemoteState(captureMode: CaptureMode, liveStandby: Bool, slimMode: Bool = false) {
         lock.lock()
-        guard self.captureMode != captureMode || self.liveStandby != liveStandby else { lock.unlock(); return }
+        guard self.captureMode != captureMode || self.liveStandby != liveStandby || self.slimMode != slimMode else {
+            lock.unlock()
+            return
+        }
         self.captureMode = captureMode
         self.liveStandby = liveStandby
+        self.slimMode = slimMode
         lock.unlock()
         queue.async { [weak self] in self?.tick() }
     }
@@ -143,6 +149,7 @@ public final class MonitoringHealthReporter {
                 self.coordinatorState = .idle
                 self.liveStandby = false
                 self.captureMode = .off
+                self.slimMode = false
                 self.activity.stop()
                 let snapshot = self.snapshot(now: Date(), uptime: ProcessInfo.processInfo.systemUptime)
                 self.lock.unlock()
@@ -187,7 +194,10 @@ public final class MonitoringHealthReporter {
             case .manualStop: detail = "카메라 꺼짐 · 원격 시청 대기도 꺼져 있습니다"
             case .scheduledRest: detail = "예약 휴식 중"
             case .systemSleep: detail = "시스템 잠자기"
-            case .remoteStandby: detail = "원격 대기 중 · 접속하면 카메라가 켜집니다"
+            case .remoteStandby:
+                detail = slimMode
+                    ? "원격 대기 중 · 슬림 모드 · Mac이 잠들어 있으면 텔레그램으로 깨워 접속합니다"
+                    : "원격 대기 중 · 접속하면 카메라가 켜집니다"
             }
         } else {
             switch coordinatorState {
@@ -207,7 +217,8 @@ public final class MonitoringHealthReporter {
             lastMotionAt: lastMotionAt, lastRecordingAt: lastRecordingAt,
             lastRecordingName: lastRecordingName, diskFreeBytes: nil,
             watchdogRecoveries: watchdogRecoveries, lastRecoveryAt: lastRecoveryAt,
-            retentionWarning: retentionWarning, liveStandby: liveStandby, captureMode: captureMode.rawValue)
+            retentionWarning: retentionWarning, liveStandby: liveStandby, captureMode: captureMode.rawValue,
+            slimMode: slimMode)
     }
 
     private func write(_ snapshot: MonitoringHealthSnapshot) {
@@ -239,7 +250,8 @@ public final class MonitoringHealthReporter {
         let key = URLResourceKey.contentModificationDateKey
         let files = (try? FileManager.default.contentsOfDirectory(at: recordingsDirectory,
             includingPropertiesForKeys: [key, .isRegularFileKey], options: [.skipsHiddenFiles])) ?? []
-        for file in files where file.pathExtension == "mp4" && file.lastPathComponent.hasPrefix("motion-") {
+        for file in files where file.pathExtension == "mp4" &&
+            (file.lastPathComponent.hasPrefix("motion-") || file.lastPathComponent.hasPrefix("schedule-")) {
             if let values = try? file.resourceValues(forKeys: [key, .isRegularFileKey]),
                values.isRegularFile == true, let date = values.contentModificationDate {
                 recordRecording(at: file, completedAt: date)

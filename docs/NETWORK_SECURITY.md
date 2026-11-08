@@ -5,6 +5,8 @@
 - HTTPS 게이트웨이 TCP 8443
 - WebRTC ICE UDP/TCP 8189
 
+텔레그램 봇을 설정하면 게이트웨이가 `api.telegram.org`로 나가는 HTTPS 연결(long polling)을 하나 유지합니다. 들어오는 포트는 늘지 않습니다.
+
 MediaMTX의 RTSP 8554와 WebRTC HTTP 8889는 `127.0.0.1`에만 bind합니다. API, metrics, pprof, playback, RTMP, HLS, SRT, MoQ는 비활성화합니다. ICE listener는 미디어 연결에 필요해 외부 인터페이스에서 대기하지만, 세션별 ICE 자격 증명은 인증된 HTTPS 협상 응답을 통해서만 전달됩니다.
 
 WebRTC 미디어는 별도 TURN·릴레이 서버를 거치지 않고 휴대폰과 iMac 사이에서 직접 연결합니다. 따라서 공유기의 UDP 8189 포트포워딩을 기본으로 사용하고, UDP가 차단된 환경을 위해 TCP 8189 직접 연결만 보조로 엽니다.
@@ -22,6 +24,10 @@ HTTPS 게이트웨이는 인증된 앱 세션에 속하며 촬영 중지·화면
 - 상태 변경: 정확한 HTTPS Origin 확인. 로그아웃은 별도 CSRF 토큰도 요구.
 
 게이트웨이는 `X-Forwarded-For`를 신뢰하지 않습니다. 공유기에서 직접 전달되는 연결의 실제 원격 주소를 로그인 제한 키로 사용합니다.
+
+텔레그램 명령: 봇 토큰과 허용 채팅 번호는 `telegram.json`(0600)에 있고 로그와 오류 메시지에서 토큰을 가립니다. 허용한 채팅 하나의 메시지만 처리하며, 그 명령은 웹 로그인과 같은 권한(카메라 켜기)만 가집니다. 처리한 메시지 번호는 `Runtime/telegram-state.json`에 저장해 재시작 뒤 같은 명령을 다시 처리하지 않습니다. 사용자의 텔레그램 계정이 탈취되면 카메라를 켤 수 있으므로 계정 2단계 인증을 권장합니다.
+
+슬림 모드: `/etc/sudoers.d/macmonitor`는 현재 사용자에게 `pmset schedule wake *`와 `pmset schedule cancel wake *` 두 명령만 비밀번호 없이 허용합니다. 다른 명령은 root 권한을 얻지 못합니다. 설치 스크립트는 `visudo -cf` 검사를 통과한 파일만 넣고, 제거 스크립트는 따로 확인받아 지웁니다.
 
 ## 미디어와 녹화
 

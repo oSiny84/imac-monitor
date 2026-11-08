@@ -12,27 +12,54 @@ public struct CaptureRuntimeInfo: Equatable {
 }
 
 /// What the camera is running for. Remote viewing needs only the live stream; motion recording
-/// adds detection and the spool on top of the same capture.
+/// adds detection and the spool on top of the same capture; scheduled recording keeps every
+/// clip of a weekly time window and skips detection.
 public enum CaptureMode: String, Equatable {
     case off
     case live
     case recording
+    case scheduled
+
+    /// Both recording modes write files and therefore need the spool and the retention pass.
+    public var writesRecordings: Bool { self == .recording || self == .scheduled }
 }
 
 public enum CaptureModePolicy {
     /// Recording wins while wanted because its stream also serves viewers, so one capture covers
-    /// both. A scheduled rest pauses recording but not a viewer who explicitly asked for video.
+    /// both. The weekly schedule wins over manual motion recording because its clips are
+    /// continuous. A scheduled rest pauses recording but not a viewer who explicitly asked for
+    /// video.
     public static func desiredMode(
         recordingWanted: Bool,
+        scheduledRecording: Bool = false,
         resting: Bool,
         systemSleeping: Bool,
         liveStandby: Bool,
         liveDemanded: Bool
     ) -> CaptureMode {
         if systemSleeping { return .off }
-        if recordingWanted && !resting { return .recording }
+        if !resting {
+            if scheduledRecording { return .scheduled }
+            if recordingWanted { return .recording }
+        }
         if liveStandby && liveDemanded { return .live }
         return .off
+    }
+
+    /// Nobody is at the Mac to press retry for a remote viewer, and an exhausted recovery budget
+    /// must not leave the camera unreachable until someone returns. This applies to recording as
+    /// well: recording wins the mode, so a failed recording would otherwise block the viewer for
+    /// good. Without a waiting viewer a failed capture keeps waiting for a manual restart.
+    public static func shouldRetryFailedCapture(
+        state: MonitoringState,
+        viewerWaiting: Bool,
+        captureRequested: Bool,
+        stopping: Bool,
+        secondsSinceFailure: TimeInterval,
+        retryInterval: TimeInterval = 30
+    ) -> Bool {
+        guard case .failed = state else { return false }
+        return viewerWaiting && captureRequested && !stopping && secondsSinceFailure >= retryInterval
     }
 }
 
@@ -67,12 +94,15 @@ extension MonitoringState {
     }
 
     public func displayText(for mode: CaptureMode) -> String {
-        guard mode == .live else { return displayText }
-        switch self {
-        case .requestingCameraPermission, .starting:
+        switch (mode, self) {
+        case (.live, .requestingCameraPermission), (.live, .starting):
             return "원격 시청 준비 중 — 카메라를 켜는 중"
-        case let .running(info):
+        case let (.live, .running(info)):
             return "원격 시청 중 — \(info.deviceName) · 녹화 안 함"
+        case (.scheduled, .requestingCameraPermission), (.scheduled, .starting):
+            return "예약 녹화 준비 중 — 카메라를 켜는 중"
+        case let (.scheduled, .running(info)):
+            return "예약 녹화 중 — \(info.deviceName)"
         default:
             return displayText
         }

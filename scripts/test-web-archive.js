@@ -441,16 +441,34 @@ test("video loads only once real frames arrive, then polling keeps it through a 
   assert.equal(elements["live-player"].src, loaded, "a playing stream must not be torn down by one stale status");
 });
 
+test("the recording cell tells scheduled recording from motion recording", async () => {
+  const { elements, api, tick } = await fixture(false, { monitoring: standby() });
+  api.mediaOnline = true;
+  const running = (captureMode) => standby({ state: "running", frameState: "receiving", expectingFrames: true, captureMode, captureFPS: 15 });
+  api.monitoring = running("scheduled");
+  await tick();
+  assert.equal(elements["recording-mode"].textContent, "켜짐 · 예약");
+  api.monitoring = running("recording");
+  await tick();
+  assert.equal(elements["recording-mode"].textContent, "켜짐 · 움직임");
+  api.monitoring = running("live");
+  await tick();
+  assert.equal(elements["recording-mode"].textContent, "꺼짐");
+});
+
 test("while the camera starts the page rechecks quickly, and a dead camera is reported instead of waiting silently", async () => {
   const { elements, api, tick } = await fixture(false, { monitoring: standby() });
   assert.equal(typeof api.timeout, "function");
-  api.now += 46000;
+  api.now += 7000;
+  await tick();
+  assert.match(elements["live-waiting"].textContent, /카메라 켜는 중… 7초/, "the viewer is asked to time the start, so show the seconds");
+  api.now += 39000;
   await tick();
   assert.match(elements["live-waiting"].textContent, /늦어지고/);
-  api.monitoring = standby({ state: "failed", detail: "카메라 권한이 필요합니다." });
+  api.monitoring = standby({ state: "failed", detail: "오류 — 카메라 권한이 필요합니다." });
   await tick();
-  assert.match(elements["live-waiting"].textContent, /켜지 못했습니다/);
-  assert.equal(elements["monitor-detail"].textContent, "카메라 권한이 필요합니다.");
+  assert.match(elements["live-waiting"].textContent, /켜지 못했습니다 · 카메라 권한이 필요합니다\. · .*다시 시도/);
+  assert.equal(elements["monitor-detail"].textContent, "오류 — 카메라 권한이 필요합니다.");
 });
 
 test("only a visible live view renews the camera lease", async () => {

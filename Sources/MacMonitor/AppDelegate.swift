@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var systemSleeping = false
     private var sleepStartedAt: Date?
     private var schedule = DailySleepSchedule()
+    private var recordingSchedule = RecordingSchedule()
     private var wasRestTime: Bool?
     private var scheduleTimer: Timer?
     private let displaySleep = DisplaySleepController()
@@ -42,6 +43,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let remoteStandbySleepPreventer = IdleSleepPreventer(reason: "MacMonitor 원격 시청 대기: 시스템은 깨어 있고 화면 절전은 허용됩니다.")
     private var remoteActivity: NSObjectProtocol?
     private var reportedStandbyPowerError = false
+    // Slim mode: the Mac may sleep between requests and wakes itself on a schedule.
+    private var slimMode = SlimModeSettings()
+    private let slimPolicy = SlimModePolicy()
+    private let power = PowerCommandRunner()
+    private var canScheduleWake = false
+    private var wakeUptime = ProcessInfo.processInfo.systemUptime
+    private var captureEndedUptime: TimeInterval?
+    private var lastDesired: CaptureMode = .off
+    private var lastTickDate = Date()
+    private var lastTickUptime = ProcessInfo.processInfo.systemUptime
+    private var pendingWake: (stamp: String, date: Date)?
+    private var sleepRequestedUptime: TimeInterval?
+    private var slimStatus: String?
 
     override init() {
         let healthReporter = MonitoringHealthReporter()
@@ -142,10 +156,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             let configuration = try AppConfiguration.loadOrCreate()
             schedule = configuration.sleepSchedule
+            recordingSchedule = configuration.recordingSchedule
+            slimMode = configuration.slimMode
             liveStandby = configuration.liveStandby
         } catch {
             AppPasswordPrompt.showError(error.localizedDescription)
         }
+        refreshWakeCapability()
         // With standby on, logging in means "be reachable", not "start recording".
         monitoringWanted = schedule.enabled || (LaunchAtLoginManager.isEnabled && !liveStandby)
         liveDemand.onChange = { [weak self] demanded in
@@ -164,6 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !readyToTerminate else { return .terminateNow }
         terminating = true
         scheduleTimer?.invalidate()
+        cancelPendingWake()
         displaySleep.cancel()
         displayOnlySleepPreventer.release()
         liveDemand.stop()
@@ -231,6 +249,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 wasRestTime = nil
                 if schedule.enabled { monitoringWanted = true }
             }
+            recordingSchedule = configuration.recordingSchedule
+            slimMode = configuration.slimMode
+            refreshWakeCapability()
             if configuration.liveStandby != liveStandby {
                 liveStandby = configuration.liveStandby
                 applyLiveStandby()
@@ -242,6 +263,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func willSleep() {
         displaySleep.cancel()
+        scheduleWakeIfNeeded()
         sleepStartedAt = Date()
         systemSleeping = true
         archiveAccess.stop()
@@ -253,6 +275,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func didWake() {
         guard authenticated, !terminating else { return }
         systemSleeping = false
+        let wokeOnSchedule = noteWake()
         archiveAccess.start()
         applyLiveStandby()
         let now = Date()
@@ -261,7 +284,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         sleepStartedAt = nil
         evaluateSchedule()
-        if schedule.isNearScheduledWake(at: Date()) ||
+        if wokeOnSchedule || schedule.isNearScheduledWake(at: Date()) ||
             (schedule.enabled && schedule.mode == .displayOnly && schedule.isRestTime(at: Date())) {
             displaySleep.turnOffOnce(respectExistingInput: true)
         }
@@ -269,6 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func evaluateSchedule() {
         guard authenticated, !terminating else { return }
+        detectSleepGap()
         if schedule.enabled && schedule.mode == .displayOnly {
             do {
                 try displayOnlySleepPreventer.acquire()
@@ -293,10 +317,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             monitoringWanted = true
         }
         wasRestTime = resting
-        // Nobody is at the Mac to press retry for a remote viewer, and an exhausted recovery
-        // budget must not make the camera unreachable until someone returns.
-        if case .failed = lastState, activeMode == .live, liveDemanded, monitoringRequested, !stoppingForPower,
-           ProcessInfo.processInfo.systemUptime - lastFailureUptime >= 30 {
+        // A viewer cannot press retry at the Mac. The decision covers a failed recording too,
+        // because recording wins the capture mode and its failure would otherwise block the viewer.
+        if CaptureModePolicy.shouldRetryFailedCapture(
+            state: lastState,
+            viewerWaiting: liveStandby && liveDemanded,
+            captureRequested: monitoringRequested,
+            stopping: stoppingForPower,
+            secondsSinceFailure: ProcessInfo.processInfo.systemUptime - lastFailureUptime
+        ) {
             monitoringRequested = false
             activeMode = .off
         }
@@ -308,11 +337,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let resting = schedule.isRestTime(at: Date(), preparationMinutes: schedule.preparationMinutes)
         let desired = CaptureModePolicy.desiredMode(
             recordingWanted: monitoringWanted,
+            scheduledRecording: recordingSchedule.isActive(at: Date()),
             resting: resting,
             systemSleeping: systemSleeping,
             liveStandby: liveStandby,
             liveDemanded: liveDemanded
         )
+        if lastDesired != .off, desired == .off { captureEndedUptime = ProcessInfo.processInfo.systemUptime }
+        lastDesired = desired
         if systemSleeping {
             healthReporter.setPauseReason(.systemSleep)
         } else if desired != .off {
@@ -327,7 +359,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if monitoringRequested { stopCapture() }
             } else if !monitoringRequested {
                 activeMode = desired
-                pipeline.setRecordingEnabled(desired == .recording)
+                pipeline.setCaptureMode(desired)
                 monitoringRequested = true
                 coordinator.start()
             } else if activeMode != desired {
@@ -337,8 +369,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 stopCapture()
             }
         }
-        healthReporter.setRemoteState(captureMode: activeMode, liveStandby: liveStandby)
-        updateRemotePower(resting: resting)
+        healthReporter.setRemoteState(captureMode: activeMode, liveStandby: liveStandby, slimMode: slimMode.enabled)
+        updateRemotePower(resting: resting, captureWanted: desired != .off)
         updateStatusPresentation()
     }
 
@@ -355,7 +387,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// A viewer can only reach a Mac that is awake, and only a responsive app can start the camera
     /// in time. Display sleep stays allowed; a scheduled system sleep is the user's explicit choice.
-    private func updateRemotePower(resting: Bool) {
+    /// Slim mode adds one exception: with nobody watching and nothing recording, the Mac may
+    /// sleep, and the wake written in willSleep brings it back for the next check.
+    private func updateRemotePower(resting: Bool, captureWanted: Bool) {
         let gatewayExpected: Bool
         switch archiveState {
         case .starting, .running, .failed:
@@ -363,7 +397,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .stopped, .notConfigured:
             gatewayExpected = false
         }
-        let standing = liveStandby && gatewayExpected && !systemSleeping && !(schedule.usesSystemSchedule && resting)
+        let reachable = liveStandby && gatewayExpected && !systemSleeping && !(schedule.usesSystemSchedule && resting)
+        let uptime = ProcessInfo.processInfo.systemUptime
+        let decision = slimPolicy.decide(SlimModePolicy.Inputs(
+            enabled: slimMode.enabled,
+            canScheduleWake: canScheduleWake,
+            captureWanted: captureWanted || monitoringRequested,
+            uptime: uptime,
+            wakeUptime: wakeUptime,
+            captureEndedUptime: captureEndedUptime,
+            secondsSinceInput: DisplaySleepController.secondsSinceInput
+        ))
+        let standing = reachable && decision == .holdAwake
         if standing {
             do {
                 try remoteStandbySleepPreventer.acquire()
@@ -380,7 +425,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // A menu bar app with no visible window is otherwise eligible for App Nap, which would
         // delay the lease poll and the status file the web page reads.
-        let needsPromptTimers = standing || monitoringRequested
+        let needsPromptTimers = reachable || monitoringRequested
         if needsPromptTimers, remoteActivity == nil {
             remoteActivity = ProcessInfo.processInfo.beginActivity(
                 options: .userInitiatedAllowingIdleSystemSleep,
@@ -389,6 +434,96 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if !needsPromptTimers, let activity = remoteActivity {
             ProcessInfo.processInfo.endActivity(activity)
             remoteActivity = nil
+        }
+        // Energy Saver alone would sleep much later or never, so slim mode asks itself. One
+        // request per wake, retried after two minutes if the Mac is somehow still up. The
+        // display-only rest is the user's own "keep the system up", so it is never overridden.
+        let keepingSystemUpForRest = schedule.enabled && schedule.mode == .displayOnly && resting
+        if decision == .sleepNow, !systemSleeping, !terminating, !keepingSystemUpForRest,
+           sleepRequestedUptime.map({ uptime - $0 > 120 }) ?? true {
+            sleepRequestedUptime = uptime
+            do {
+                try power.sleepNow()
+            } catch {
+                NSLog("MacMonitor: sleep request failed: %@", error.localizedDescription)
+                slimStatus = "잠자기 실패 — \(error.localizedDescription)"
+            }
+        }
+    }
+
+    // MARK: Slim mode
+
+    /// Whether this Mac can schedule its own wake-ups, proven by scheduling and cancelling one a
+    /// day out. Asked whenever the settings change and never assumed, because a Mac that cannot
+    /// wake itself must stay awake; a problem found at willSleep would be found too late.
+    private func refreshWakeCapability() {
+        if slimStatus?.hasPrefix("슬림 모드 대기") == true { slimStatus = nil }
+        guard slimMode.enabled || recordingSchedule.enabled else {
+            canScheduleWake = false
+            return
+        }
+        do {
+            try power.proveWakeScheduling()
+            canScheduleWake = true
+        } catch {
+            canScheduleWake = false
+            NSLog("MacMonitor: wake scheduling probe failed: %@", error.localizedDescription)
+            if slimMode.enabled {
+                slimStatus = "슬림 모드 대기 — 깨우기 예약 확인 실패: \(error.localizedDescription) · scripts/enable-slim-mode.sh"
+            }
+        }
+    }
+
+    /// Runs right before sleep, whatever caused it. The daily rest's repeat schedule wakes the
+    /// Mac in the morning on its own, so no periodic wake is added during that rest.
+    private func scheduleWakeIfNeeded() {
+        guard canScheduleWake, slimMode.enabled || recordingSchedule.enabled else { return }
+        let now = Date()
+        if schedule.usesSystemSchedule, schedule.isRestTime(at: now, preparationMinutes: schedule.preparationMinutes) { return }
+        guard let target = slimPolicy.nextWake(after: now, interval: slimMode.enabled ? slimMode.wakeInterval : nil,
+                                               recordingSchedule: recordingSchedule) else { return }
+        cancelPendingWake()
+        do {
+            let stamp = try power.scheduleWake(at: target)
+            pendingWake = (stamp, target)
+            slimStatus = nil
+        } catch {
+            NSLog("MacMonitor: wake scheduling failed: %@", error.localizedDescription)
+            slimStatus = "깨우기 예약 실패 — \(error.localizedDescription)"
+        }
+    }
+
+    private func cancelPendingWake() {
+        guard let pending = pendingWake else { return }
+        pendingWake = nil
+        power.cancelWake(pending.stamp)
+    }
+
+    /// Opens the check window for this wake. Returns whether it is the wake we scheduled, in
+    /// which case the display may be turned back off.
+    private func noteWake() -> Bool {
+        wakeUptime = ProcessInfo.processInfo.systemUptime
+        sleepRequestedUptime = nil
+        let onSchedule = SlimModePolicy.isNear(Date(), scheduled: pendingWake?.date)
+        cancelPendingWake()
+        return onSchedule
+    }
+
+    /// A scheduled wake can be a dark wake that posts no notification. The ten-second tick
+    /// compares wall-clock progress with uptime, which pauses during sleep.
+    private func detectSleepGap() {
+        let now = Date()
+        let uptime = ProcessInfo.processInfo.systemUptime
+        let slept = slimPolicy.slept(wallClockElapsed: now.timeIntervalSince(lastTickDate), uptimeElapsed: uptime - lastTickUptime)
+        lastTickDate = now
+        lastTickUptime = uptime
+        guard slept else { return }
+        NSLog("MacMonitor: sleep detected from the clock gap")
+        if systemSleeping {
+            // willSleep ran but didWake never came; finish the wake ourselves.
+            didWake()
+        } else if noteWake() {
+            displaySleep.turnOffOnce(respectExistingInput: true)
         }
     }
 
@@ -454,6 +589,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     title = "원격 시청 대기 중 — 접속하면 카메라가 켜집니다"
                 }
             }
+            if recordingSchedule.enabled, let next = recordingSchedule.nextStart(after: Date()) {
+                title += " · 예약 녹화 \(Self.clockText(next)) 시작"
+            }
+            if let slimStatus {
+                title += " · \(slimStatus)"
+            } else if slimMode.enabled {
+                title += " · 슬림 모드"
+            }
         case .running:
             symbol = "video.fill"
         case .failed:
@@ -471,5 +614,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
         startMenuItem.isEnabled = !monitoringWanted || failed
         stopMenuItem.isEnabled = monitoringWanted
+    }
+
+    private static func clockText(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.dateFormat = "E HH:mm"
+        return formatter.string(from: date)
     }
 }

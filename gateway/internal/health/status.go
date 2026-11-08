@@ -27,6 +27,7 @@ type Snapshot struct {
 	RetentionWarning   string     `json:"retentionWarning,omitempty"`
 	LiveStandby        bool       `json:"liveStandby"`
 	CaptureMode        string     `json:"captureMode,omitempty"`
+	SlimMode           bool       `json:"slimMode"`
 }
 
 type Status struct {
@@ -72,7 +73,7 @@ func Read(path string, now time.Time) Status {
 		return unknown
 	}
 	switch snapshot.CaptureMode {
-	case "", "off", "live", "recording":
+	case "", "off", "live", "recording", "scheduled":
 	default:
 		return unknown
 	}

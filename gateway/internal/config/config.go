@@ -22,6 +22,7 @@ type Config struct {
 	RecordingsDirectory  string `json:"recordingsDirectory"`
 	MonitoringStatusFile string `json:"monitoringStatusFile,omitempty"`
 	LiveDemandFile       string `json:"liveDemandFile,omitempty"`
+	TelegramFile         string `json:"telegramFile,omitempty"`
 	PasswordHash         string `json:"passwordHash"`
 	SessionIdleMinutes   int    `json:"sessionIdleMinutes"`
 	SessionMaxHours      int    `json:"sessionMaxHours"`
@@ -48,7 +49,7 @@ func Load(path string) (Config, error) {
 	if cfg.SessionMaxHours == 0 {
 		cfg.SessionMaxHours = 24
 	}
-	if cfg.MonitoringStatusFile == "" || cfg.LiveDemandFile == "" {
+	if cfg.MonitoringStatusFile == "" || cfg.LiveDemandFile == "" || cfg.TelegramFile == "" {
 		directory, err := filepath.Abs(filepath.Dir(path))
 		if err != nil {
 			return Config{}, fmt.Errorf("resolve config directory: %w", err)
@@ -58,6 +59,9 @@ func Load(path string) (Config, error) {
 		}
 		if cfg.LiveDemandFile == "" {
 			cfg.LiveDemandFile = filepath.Join(directory, "Runtime", "live-demand.json")
+		}
+		if cfg.TelegramFile == "" {
+			cfg.TelegramFile = filepath.Join(directory, "telegram.json")
 		}
 	}
 	if err := cfg.Validate(); err != nil {
@@ -90,6 +94,9 @@ func (c Config) Validate() error {
 	}
 	if c.LiveDemandFile != "" && !filepath.IsAbs(c.LiveDemandFile) {
 		return errors.New("liveDemandFile must be an absolute path")
+	}
+	if c.TelegramFile != "" && !filepath.IsAbs(c.TelegramFile) {
+		return errors.New("telegramFile must be an absolute path")
 	}
 	if !strings.HasPrefix(c.PasswordHash, "pbkdf2_sha256$") {
 		return errors.New("passwordHash is required")

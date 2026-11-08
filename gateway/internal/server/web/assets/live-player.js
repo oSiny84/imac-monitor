@@ -133,7 +133,9 @@
     // spends no retry and does not lower the quality. Bounded so a dead camera still surfaces.
     waitForStream() {
       if (!this.streamWaitStartedAt) this.streamWaitStartedAt = Date.now();
-      if (Date.now() - this.streamWaitStartedAt >= 45000) return false;
+      // Giving up closes this waiting episode, so a later attempt gets its own window instead
+      // of failing at once because an old timestamp is still set.
+      if (Date.now() - this.streamWaitStartedAt >= 45000) { this.streamWaitStartedAt = 0; return false; }
       this.generation++; this.clearCurrent();
       this.status.textContent = "카메라 준비 중…";
       this.metrics.textContent = "";

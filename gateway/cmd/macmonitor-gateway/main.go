@@ -2,20 +2,25 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"macmonitor.local/gateway/internal/auth"
+	"macmonitor.local/gateway/internal/chat"
 	"macmonitor.local/gateway/internal/config"
 	webserver "macmonitor.local/gateway/internal/server"
 )
@@ -70,6 +75,13 @@ func serve(arguments []string) {
 			NextProtos: []string{"h2", "http/1.1"},
 		},
 	}
+
+	// The bot is optional and follows telegram.json on its own, so a missing or broken file
+	// never stops the web server. The process ends with the app, which also ends the bot.
+	go chat.Supervise(context.Background(), cfg.TelegramFile, 10*time.Second, func(telegram chat.Config) *chat.Bot {
+		return chat.New(telegram, cfg.PublicOrigin, cfg.LiveDemandFile, cfg.MonitoringStatusFile,
+			filepath.Join(filepath.Dir(cfg.LiveDemandFile), "telegram-state.json"))
+	}, log.Printf)
 
 	log.Printf("MacMonitor gateway listening on %s", cfg.ListenAddress)
 	if err := httpServer.ListenAndServeTLS(cfg.TLSCertificateFile, cfg.TLSPrivateKeyFile); err != nil && err != http.ErrServerClosed {
@@ -180,12 +192,29 @@ func checkConfig(arguments []string) {
 	if !recordingsInfo.IsDir() {
 		log.Fatal("recordingsDirectory is not a directory")
 	}
+	telegramSummary := "telegram: not configured"
+	telegram, err := chat.LoadConfig(cfg.TelegramFile)
+	switch {
+	case err == nil:
+		telegramInfo, statErr := os.Stat(cfg.TelegramFile)
+		if statErr != nil {
+			log.Fatalf("telegram configuration error: %v", statErr)
+		}
+		if telegramInfo.Mode().Perm()&0o077 != 0 {
+			log.Fatalf("telegram configuration must deny group/other access; found %04o", telegramInfo.Mode().Perm())
+		}
+		telegramSummary = fmt.Sprintf("telegram: chat %d, camera stays on %d minutes per request", telegram.ChatID, telegram.ViewMinutes)
+	case errors.Is(err, fs.ErrNotExist):
+	default:
+		log.Fatalf("telegram configuration error: %v", err)
+	}
 
 	fmt.Printf("gateway configuration: OK\n")
 	fmt.Printf("public origin: %s\n", cfg.PublicOrigin)
 	fmt.Printf("listen address: %s\n", cfg.ListenAddress)
 	fmt.Printf("certificate expires: %s\n", certificate.NotAfter.Format(time.RFC3339))
 	fmt.Printf("recordings directory: %s\n", cfg.RecordingsDirectory)
+	fmt.Printf("%s\n", telegramSummary)
 }
 
 func readPassword(prompt string) string {

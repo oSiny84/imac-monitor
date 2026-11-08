@@ -11,7 +11,7 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
     private var encoder: FFmpegPipeline?
     private var starting = false
     private var started = false
-    private var recordingEnabled = true
+    private var captureMode: CaptureMode = .recording
     private let healthReporter: MonitoringHealthReporter?
 
     public init(healthReporter: MonitoringHealthReporter? = nil) {
@@ -21,11 +21,12 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
         }
     }
 
-    /// Applies from the next start, so automatic recovery restarts keep the same mode. Without
-    /// recording there is no motion detection, spool or retention pass, only the live stream.
-    public func setRecordingEnabled(_ enabled: Bool) {
+    /// Applies from the next start, so automatic recovery restarts keep the same mode. Live has
+    /// no detection, spool or retention pass; motion recording has all three; scheduled recording
+    /// keeps every clip and skips detection.
+    public func setCaptureMode(_ mode: CaptureMode) {
         stateLock.lock()
-        recordingEnabled = enabled
+        captureMode = mode
         stateLock.unlock()
     }
 
@@ -35,7 +36,7 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
         if canStart {
             starting = true
         }
-        let recordingEnabled = self.recordingEnabled
+        let mode = self.captureMode
         stateLock.unlock()
         guard canStart else { return }
         defer {
@@ -57,15 +58,19 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
             ffmpegURL: ffmpegURL
         )
         let reporter = healthReporter
+        let maximumAge = TimeInterval(configuration.retentionDays) * 86_400
+        let maximumBytes = Int64(configuration.retentionMaxGigabytes * 1_073_741_824)
+        let minimumFreeBytes = Int64(configuration.minimumFreeGigabytes * 1_073_741_824)
         var retention: RecordingRetentionManager?
-        if recordingEnabled {
+        switch mode {
+        case .recording:
             retention = RecordingRetentionManager(
                 spoolDirectory: AppDirectories.spool,
                 recordingsDirectory: AppDirectories.recordings,
                 policy: RetentionPolicy(
-                    maximumAge: TimeInterval(configuration.retentionDays) * 86_400,
-                    maximumBytes: Int64(configuration.retentionMaxGigabytes * 1_073_741_824),
-                    minimumFreeBytes: Int64(configuration.minimumFreeGigabytes * 1_073_741_824),
+                    maximumAge: maximumAge,
+                    maximumBytes: maximumBytes,
+                    minimumFreeBytes: minimumFreeBytes,
                     preRoll: TimeInterval(configuration.preRollSeconds),
                     postRoll: TimeInterval(configuration.postRollSeconds)
                 ),
@@ -74,6 +79,25 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
                 }),
                 onWarning: { [weak reporter] warning in reporter?.recordRetentionWarning(warning) }
             )
+        case .scheduled:
+            // Every closed clip is kept, under the same size, age and free-space limits.
+            retention = RecordingRetentionManager(
+                spoolDirectory: AppDirectories.spool,
+                recordingsDirectory: AppDirectories.recordings,
+                policy: RetentionPolicy(
+                    maximumAge: maximumAge,
+                    maximumBytes: maximumBytes,
+                    minimumFreeBytes: minimumFreeBytes,
+                    preRoll: 0,
+                    postRoll: 0,
+                    segmentDuration: configuration.recordingSchedule.segmentDuration,
+                    keepEverySegment: true
+                ),
+                onWarning: { [weak reporter] warning in reporter?.recordRetentionWarning(warning) },
+                onPromoted: { [weak reporter] url in reporter?.recordRecording(at: url) }
+            )
+        case .live, .off:
+            retention = nil
         }
         let encoder = FFmpegPipeline(
             configuration: FFmpegPipelineConfiguration(
@@ -82,7 +106,9 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
                 rtspPublishURL: URL(string: "rtsp://127.0.0.1:8554/live")!,
                 logURL: AppDirectories.diagnostics.appendingPathComponent("ffmpeg.log"),
                 bitrateKbps: configuration.videoBitrateKbps,
-                recordingEnabled: recordingEnabled
+                segmentSeconds: mode == .scheduled ? configuration.recordingSchedule.segmentMinutes * 60 : 5,
+                segmentFilePrefix: mode == .scheduled ? "schedule" : "segment",
+                recordingEnabled: mode.writesRecordings
             )
         )
         mediaServer.failureHandler = { [weak self] error in
@@ -104,7 +130,7 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
         }
 
         var detector: MotionDetector?
-        if recordingEnabled {
+        if mode == .recording {
             detector = MotionDetector(
                 configuration: MotionConfiguration(
                     pixelDifferenceThreshold: configuration.motionPixelThreshold,

@@ -48,7 +48,12 @@ final class MonitoringHealthReporterTests: XCTestCase {
         reporter.setRemoteState(captureMode: .off, liveStandby: true)
         waitForSnapshot(at: status) {
             $0["state"] as? String == "standby" && $0["expectingFrames"] as? Bool == false &&
-                $0["liveStandby"] as? Bool == true && $0["captureMode"] as? String == "off"
+                $0["liveStandby"] as? Bool == true && $0["captureMode"] as? String == "off" &&
+                $0["slimMode"] as? Bool == false
+        }
+        reporter.setRemoteState(captureMode: .off, liveStandby: true, slimMode: true)
+        waitForSnapshot(at: status) {
+            $0["slimMode"] as? Bool == true && ($0["detail"] as? String)?.contains("슬림 모드") == true
         }
 
         reporter.setPauseReason(nil)

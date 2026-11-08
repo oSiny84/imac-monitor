@@ -13,6 +13,8 @@ public struct FFmpegPipelineConfiguration {
     public let framesPerSecond: Int
     public let bitrateKbps: Int
     public let segmentSeconds: Int
+    /// Stem of the clip files: motion spool segments and scheduled clips must stay distinguishable.
+    public let segmentFilePrefix: String
     /// False publishes the live stream only and writes nothing to the spool.
     public let recordingEnabled: Bool
 
@@ -26,6 +28,7 @@ public struct FFmpegPipelineConfiguration {
         framesPerSecond: Int = 15,
         bitrateKbps: Int = 1_200,
         segmentSeconds: Int = 5,
+        segmentFilePrefix: String = "segment",
         recordingEnabled: Bool = true
     ) {
         self.executableURL = executableURL
@@ -37,6 +40,7 @@ public struct FFmpegPipelineConfiguration {
         self.framesPerSecond = framesPerSecond
         self.bitrateKbps = bitrateKbps
         self.segmentSeconds = segmentSeconds
+        self.segmentFilePrefix = segmentFilePrefix
         self.recordingEnabled = recordingEnabled
     }
 }
@@ -249,7 +253,7 @@ public final class FFmpegPipeline {
 
     func arguments() -> [String] {
         let segmentPattern = configuration.spoolDirectory
-            .appendingPathComponent("segment-%Y%m%dT%H%M%S.mp4")
+            .appendingPathComponent("\(configuration.segmentFilePrefix)-%Y%m%dT%H%M%S.mp4")
             .path
         // A local publish failure must restart the pipeline; silently dropping
         // this slave would leave monitoring 'running' without any live video.
