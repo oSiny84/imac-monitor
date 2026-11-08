@@ -338,6 +338,60 @@ func TestACameraFailureIsReportedBackToTheChat(t *testing.T) {
 	}
 }
 
+func TestTheViewingWindowEndsWhenTheViewerLeavesOrNeverComes(t *testing.T) {
+	h := newHarness(t)
+	h.bot.StartupTimeout = 0 // the start confirmation would otherwise advance the fake clock
+	var seen time.Time
+	h.bot.ViewerSeen = func() time.Time { return seen }
+	start := h.clock.Now()
+	h.queue(h.message(1, 42, "카메라", start))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Nobody opens the link: the window ends after NoViewerTimeout instead of ten minutes.
+	h.clock.Advance(2*time.Minute + 59*time.Second)
+	if !h.renews() {
+		t.Fatal("the window ended before the no-viewer timeout")
+	}
+	h.clock.Advance(2 * time.Second)
+	if h.renews() {
+		t.Fatal("the window stayed open although nobody opened the link for three minutes")
+	}
+	texts := h.api.texts(42)
+	if !strings.Contains(texts[len(texts)-1], "아무도 열지 않아") {
+		t.Fatalf("the owner was not told why the request ended: %v", texts)
+	}
+
+	// A viewer comes and goes: the window ends ViewerGone after their last renewal.
+	h.queue(h.message(2, 42, "카메라", h.clock.Now()))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.clock.Advance(30 * time.Second)
+	seen = h.clock.Now()
+	h.clock.Advance(4 * time.Minute)
+	seen = h.clock.Now() // still watching four minutes in
+	if !h.renews() {
+		t.Fatal("a watching viewer must keep the window open past the no-viewer timeout")
+	}
+	h.clock.Advance(91 * time.Second)
+	if h.renews() {
+		t.Fatal("the window stayed open 91 s after the viewer left")
+	}
+	texts = h.api.texts(42)
+	if !strings.Contains(texts[len(texts)-1], "웹 시청이 끝나") {
+		t.Fatalf("the owner was not told the viewer left: %v", texts)
+	}
+}
+
+// renews reports whether one renewal tick at the fake clock's time still rewrites the lease.
+func (h *harness) renews() bool {
+	before, _ := os.ReadFile(h.demandFile)
+	h.bot.renewOnce(h.clock.Now())
+	after, _ := os.ReadFile(h.demandFile)
+	return string(before) != string(after)
+}
+
 func TestASilentAppIsReportedAfterTheStartupTimeout(t *testing.T) {
 	h := newHarness(t)
 	h.queue(h.message(1, 42, "카메라", h.clock.Now()))
@@ -357,6 +411,7 @@ func TestStatusAndHelpReplies(t *testing.T) {
 		s.Detail = "원격 녹화 중 — Test Camera"
 		s.Audio = "unavailable"
 		s.AudioDetail = "마이크 권한 필요"
+		s.SlimDetail = "카메라 사용 중 · 깨어 있음"
 		free := int64(123_400_000_000)
 		s.DiskFreeBytes = &free
 	})
@@ -369,7 +424,7 @@ func TestStatusAndHelpReplies(t *testing.T) {
 	if len(texts) != 2 {
 		t.Fatalf("unexpected replies: %v", texts)
 	}
-	for _, expected := range []string{"상태: 카메라 켜짐 · 원격 녹화", "원격 녹화 중 — Test Camera", "소리 없음 (마이크 권한 필요)", "디스크 여유 123.4GB"} {
+	for _, expected := range []string{"상태: 카메라 켜짐 · 원격 녹화", "원격 녹화 중 — Test Camera", "소리 없음 (마이크 권한 필요)", "슬림: 카메라 사용 중 · 깨어 있음", "디스크 여유 123.4GB"} {
 		if !strings.Contains(texts[0], expected) {
 			t.Fatalf("status reply %q lacks %q", texts[0], expected)
 		}

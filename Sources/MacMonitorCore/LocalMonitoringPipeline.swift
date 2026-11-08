@@ -5,13 +5,12 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
     public var failureHandler: ((Error) -> Void)?
 
     private let stateLock = NSLock()
-    private var detector: MotionDetector?
     private var retention: RecordingRetentionManager?
     private var mediaServer: MediaMTXSupervisor?
     private var encoder: FFmpegPipeline?
     private var starting = false
     private var started = false
-    private var captureMode: CaptureMode = .recording
+    private var captureMode: CaptureMode = .live
     private var audioEncoderProblem: String?
     private let healthReporter: MonitoringHealthReporter?
 
@@ -30,8 +29,7 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
     }
 
     /// Applies from the next start, so automatic recovery restarts keep the same mode. Live has
-    /// no detection, spool or retention pass; motion recording has all three; timed recording
-    /// keeps every clip and skips detection.
+    /// no spool or retention pass; timed recording writes every clip and keeps them.
     public func setCaptureMode(_ mode: CaptureMode) {
         stateLock.lock()
         captureMode = mode
@@ -83,8 +81,8 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
         let maximumBytes = Int64(configuration.retentionMaxGigabytes * 1_073_741_824)
         let minimumFreeBytes = Int64(configuration.minimumFreeGigabytes * 1_073_741_824)
         var retention: RecordingRetentionManager?
-        switch mode {
-        case .recording:
+        if mode == .timed {
+            // Every closed clip is kept, under the size, age and free-space limits.
             retention = RecordingRetentionManager(
                 spoolDirectory: AppDirectories.spool,
                 recordingsDirectory: AppDirectories.recordings,
@@ -92,33 +90,11 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
                     maximumAge: maximumAge,
                     maximumBytes: maximumBytes,
                     minimumFreeBytes: minimumFreeBytes,
-                    preRoll: TimeInterval(configuration.preRollSeconds),
-                    postRoll: TimeInterval(configuration.postRollSeconds)
-                ),
-                eventMerger: FFmpegRecordingEventMerger(executableURL: ffmpegURL, onCompleted: { [weak reporter] url in
-                    reporter?.recordRecording(at: url)
-                }),
-                onWarning: { [weak reporter] warning in reporter?.recordRetentionWarning(warning) }
-            )
-        case .timed:
-            // Every closed clip is kept, under the same size, age and free-space limits.
-            retention = RecordingRetentionManager(
-                spoolDirectory: AppDirectories.spool,
-                recordingsDirectory: AppDirectories.recordings,
-                policy: RetentionPolicy(
-                    maximumAge: maximumAge,
-                    maximumBytes: maximumBytes,
-                    minimumFreeBytes: minimumFreeBytes,
-                    preRoll: 0,
-                    postRoll: 0,
-                    segmentDuration: RecordingDemand.clipDuration,
-                    keepEverySegment: true
+                    segmentDuration: RecordingDemand.clipDuration
                 ),
                 onWarning: { [weak reporter] warning in reporter?.recordRetentionWarning(warning) },
                 onPromoted: { [weak reporter] url in reporter?.recordRecording(at: url) }
             )
-        case .live, .off:
-            retention = nil
         }
         let encoder = FFmpegPipeline(
             configuration: FFmpegPipelineConfiguration(
@@ -127,8 +103,8 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
                 rtspPublishURL: URL(string: "rtsp://127.0.0.1:8554/live")!,
                 logURL: AppDirectories.diagnostics.appendingPathComponent("ffmpeg.log"),
                 bitrateKbps: configuration.videoBitrateKbps,
-                segmentSeconds: mode == .timed ? Int(RecordingDemand.clipDuration) : 5,
-                segmentFilePrefix: mode == .timed ? "remote" : "segment",
+                segmentSeconds: Int(RecordingDemand.clipDuration),
+                segmentFilePrefix: "remote",
                 recordingEnabled: mode.writesRecordings,
                 audio: audio
             )
@@ -151,16 +127,6 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
             throw error
         }
 
-        var detector: MotionDetector?
-        if mode == .recording {
-            detector = MotionDetector(
-                configuration: MotionConfiguration(
-                    pixelDifferenceThreshold: configuration.motionPixelThreshold,
-                    changedPixelFraction: configuration.motionChangedFraction,
-                    regions: configuration.motionRegions
-                )
-            )
-        }
         stateLock.lock()
         guard starting else {
             stateLock.unlock()
@@ -169,7 +135,6 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
             mediaServer.stop()
             throw LocalMonitoringPipelineError.startCancelled
         }
-        self.detector = detector
         self.retention = retention
         self.mediaServer = mediaServer
         self.encoder = encoder
@@ -192,18 +157,8 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
             stateLock.unlock()
             return
         }
-        if let detector, let retention,
-           let observation = detector.analyze(sampleBuffer: sampleBuffer), observation.isMotion {
-            retention.recordMotion(at: observation.timestamp)
-            healthReporter?.recordMotion(at: observation.timestamp)
-        }
-        let samplingError = detector?.takeSamplingError()
         encoder.consume(sampleBuffer: sampleBuffer)
         stateLock.unlock()
-        // Failure handling can stop/restart the pipeline and must run outside its lock.
-        if let samplingError {
-            reportFailure(samplingError)
-        }
     }
 
     public func stop() {
@@ -214,11 +169,9 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
         }
         started = false
         starting = false
-        let detector = self.detector
         let retention = self.retention
         let mediaServer = self.mediaServer
         let encoder = self.encoder
-        self.detector = nil
         self.retention = nil
         self.encoder = nil
         self.mediaServer = nil
@@ -226,7 +179,6 @@ public final class LocalMonitoringPipeline: MonitoringPipelineControlling {
         encoder?.stop()
         retention?.stopAndFinalize()
         mediaServer?.stop()
-        detector?.reset()
     }
 
     private func reportFailure(_ error: Error) {

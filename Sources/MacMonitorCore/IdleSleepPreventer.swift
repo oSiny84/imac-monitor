@@ -15,11 +15,23 @@ public enum IdleSleepPreventerError: LocalizedError {
 /// Prevents automatic system idle sleep while intentionally allowing display sleep.
 /// It does not prevent sleep requested explicitly from the Apple menu or by other causes.
 public final class IdleSleepPreventer: IdleSleepPreventing {
+    public enum Kind {
+        /// The usual assertion: no idle sleep while the user session is awake.
+        case preventUserIdleSystemSleep
+        /// Also holds a dark wake open. A scheduled wake may be a dark wake, and only this
+        /// assertion keeps the Mac from going straight back to sleep before the gateway and
+        /// the chat bot have had their check window.
+        case preventSystemSleep
+    }
+
     private let lock = NSLock()
     private var assertionID: IOPMAssertionID?
     private let reason: String
+    private let kind: Kind
 
-    public init(reason: String = "MacMonitor가 카메라를 사용 중입니다. 디스플레이 절전은 계속 허용됩니다.") {
+    public init(kind: Kind = .preventUserIdleSystemSleep,
+                reason: String = "MacMonitor가 카메라를 사용 중입니다. 디스플레이 절전은 계속 허용됩니다.") {
+        self.kind = kind
         self.reason = reason
     }
 
@@ -30,8 +42,13 @@ public final class IdleSleepPreventer: IdleSleepPreventing {
         guard assertionID == nil else { return }
 
         var newAssertionID = IOPMAssertionID(0)
+        let type: CFString
+        switch kind {
+        case .preventUserIdleSystemSleep: type = kIOPMAssertionTypePreventUserIdleSystemSleep as CFString
+        case .preventSystemSleep: type = kIOPMAssertionTypePreventSystemSleep as CFString
+        }
         let result = IOPMAssertionCreateWithName(
-            kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
+            type,
             IOPMAssertionLevel(kIOPMAssertionLevelOn),
             reason as CFString,
             &newAssertionID

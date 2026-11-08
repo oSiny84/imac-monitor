@@ -565,6 +565,15 @@ fi
 }
 echo 'PASS: enable-slim-mode installs nothing when visudo rejects the rule'
 
+# Under sudo the rule would name root, which the app's `sudo -n` never matches.
+if SUDO_USER=someone MACMONITOR_SUDOERS_DIR="$FIXTURE/sudoers.d" PATH="$FIXTURE/bin:$PATH" \
+    bash "$FIXTURE/scripts/enable-slim-mode.sh" </dev/null >"$FIXTURE/sudo-run.log" 2>&1; then
+    echo 'FAIL: enable-slim-mode ran under sudo instead of refusing'
+    exit 1
+fi
+grep -q "without sudo" "$FIXTURE/sudo-run.log" || { echo 'FAIL: enable-slim-mode did not say to run without sudo'; cat "$FIXTURE/sudo-run.log"; exit 1; }
+echo 'PASS: enable-slim-mode refuses to run under sudo'
+
 export TEST_VISUDO=ok
 : > "$SLIM_LOG"
 run_slim > "$FIXTURE/slim-out.txt" 2>&1 || {

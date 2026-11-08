@@ -79,8 +79,10 @@ func serve(arguments []string) {
 	// The bot is optional and follows telegram.json on its own, so a missing or broken file
 	// never stops the web server. The process ends with the app, which also ends the bot.
 	go chat.Supervise(context.Background(), cfg.TelegramFile, 10*time.Second, func(telegram chat.Config) *chat.Bot {
-		return chat.New(telegram, cfg.PublicOrigin, cfg.LiveDemandFile, cfg.MonitoringStatusFile,
+		bot := chat.New(telegram, cfg.PublicOrigin, cfg.LiveDemandFile, cfg.MonitoringStatusFile,
 			filepath.Join(filepath.Dir(cfg.LiveDemandFile), "telegram-state.json"))
+		bot.ViewerSeen = server.LastViewerDemand
+		return bot
 	}, log.Printf)
 
 	log.Printf("MacMonitor gateway listening on %s", cfg.ListenAddress)

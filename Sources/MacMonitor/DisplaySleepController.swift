@@ -13,7 +13,14 @@ final class DisplaySleepController {
         pending = nil
     }
 
+    /// Seconds since any keyboard, mouse or tablet input in this login session. Quartz keeps a
+    /// combined counter for all input types (kCGAnyInputEventType, raw value ~0); the per-type
+    /// list is the fallback should that value ever fail to map. Remote input such as Screen
+    /// Sharing counts as presence: it is someone using the Mac.
     static var secondsSinceInput: TimeInterval {
+        if let anyInput = CGEventType(rawValue: ~0) {
+            return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: anyInput)
+        }
         let input: [CGEventType] = [.keyDown, .flagsChanged, .mouseMoved,
                                    .leftMouseDown, .rightMouseDown, .otherMouseDown,
                                    .leftMouseDragged, .rightMouseDragged, .scrollWheel]

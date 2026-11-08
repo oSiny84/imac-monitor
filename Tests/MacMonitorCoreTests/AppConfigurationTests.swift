@@ -2,12 +2,11 @@ import XCTest
 @testable import MacMonitorCore
 
 final class AppConfigurationTests: XCTestCase {
-    func testLegacyConfigurationKeepsItsRecordingWindow() throws {
-        let json = #"{"externalWebRTCHosts":[],"videoBitrateKbps":1200,"motionPixelThreshold":18,"motionChangedFraction":0.025,"retentionDays":14,"retentionMaxGigabytes":20,"minimumFreeGigabytes":5}"#
+    func testLegacyConfigurationLoadsAndIgnoresTheRemovedMotionKeys() throws {
+        let json = #"{"externalWebRTCHosts":[],"videoBitrateKbps":1200,"motionPixelThreshold":18,"motionChangedFraction":0.025,"preRollSeconds":30,"postRollSeconds":60,"motionRegions":{"detection":[],"exclusion":[]},"retentionDays":14,"retentionMaxGigabytes":20,"minimumFreeGigabytes":5}"#
         let configuration = try JSONDecoder().decode(AppConfiguration.self, from: Data(json.utf8))
         try configuration.validate()
-        XCTAssertEqual(configuration.preRollSeconds, 5)
-        XCTAssertEqual(configuration.postRollSeconds, 15)
+        XCTAssertEqual(configuration.retentionDays, 14)
         XCTAssertFalse(configuration.sleepSchedule.enabled)
         XCTAssertTrue(configuration.liveStandby, "remote viewing is the default for existing settings too")
     }

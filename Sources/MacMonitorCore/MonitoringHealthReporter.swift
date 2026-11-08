@@ -17,7 +17,6 @@ struct MonitoringHealthSnapshot: Codable {
     let lastFrameAt: Date?
     let captureFPS: Double
     let totalFrames: UInt64
-    let lastMotionAt: Date?
     let lastRecordingAt: Date?
     let lastRecordingName: String?
     var diskFreeBytes: Int64?
@@ -30,6 +29,8 @@ struct MonitoringHealthSnapshot: Codable {
     /// "on", "off" or "unavailable" while the camera runs; absent otherwise.
     let audio: String?
     let audioDetail: String?
+    /// Why slim mode is or is not putting the Mac to sleep right now.
+    let slimDetail: String?
 }
 
 /// A small private, atomically replaced status file is read by the independent
@@ -46,7 +47,6 @@ public final class MonitoringHealthReporter {
     private var activity = FrameActivityTracker()
     private var captureStartedAt: Date?
     private var lastFrameAt: Date?
-    private var lastMotionAt: Date?
     private var lastRecordingAt: Date?
     private var lastRecordingName: String?
     private var watchdogRecoveries = 0
@@ -57,6 +57,7 @@ public final class MonitoringHealthReporter {
     private var liveStandby = false
     private var captureMode: CaptureMode = .off
     private var slimMode = false
+    private var slimDetail: String?
     private var audioEncoderProblem: String?
 
     public var onStall: (() -> Void)? {
@@ -104,6 +105,15 @@ public final class MonitoringHealthReporter {
         queue.async { [weak self] in self?.tick() }
     }
 
+    /// The slim-mode decision in words, refreshed by the app's ten-second tick.
+    public func setSlimDetail(_ detail: String?) {
+        lock.lock()
+        guard slimDetail != detail else { lock.unlock(); return }
+        slimDetail = detail
+        lock.unlock()
+        queue.async { [weak self] in self?.tick() }
+    }
+
     /// Why FFmpeg cannot encode sound, or nil. Set when the pipeline starts.
     public func setAudioEncoder(problem: String?) {
         lock.lock()
@@ -131,11 +141,6 @@ public final class MonitoringHealthReporter {
         guard enabled else { return }
         lastFrameAt = date
         activity.recordFrame(at: uptime)
-    }
-
-    public func recordMotion(at date: Date) {
-        lock.lock(); defer { lock.unlock() }
-        lastMotionAt = date
     }
 
     public func recordRetentionWarning(_ warning: String?) {
@@ -238,11 +243,11 @@ public final class MonitoringHealthReporter {
             state: state, detail: detail, expectingFrames: activity.isActive,
             captureStartedAt: captureStartedAt, lastFrameAt: lastFrameAt,
             captureFPS: activity.takeFPS(at: uptime), totalFrames: activity.frames,
-            lastMotionAt: lastMotionAt, lastRecordingAt: lastRecordingAt,
+            lastRecordingAt: lastRecordingAt,
             lastRecordingName: lastRecordingName, diskFreeBytes: nil,
             watchdogRecoveries: watchdogRecoveries, lastRecoveryAt: lastRecoveryAt,
             retentionWarning: retentionWarning, liveStandby: liveStandby, captureMode: captureMode.rawValue,
-            slimMode: slimMode, audio: audio, audioDetail: audioDetail)
+            slimMode: slimMode, audio: audio, audioDetail: audioDetail, slimDetail: slimDetail)
     }
 
     private func write(_ snapshot: MonitoringHealthSnapshot) {

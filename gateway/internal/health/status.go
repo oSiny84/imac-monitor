@@ -18,7 +18,6 @@ type Snapshot struct {
 	LastFrameAt        *time.Time `json:"lastFrameAt,omitempty"`
 	CaptureFPS         float64    `json:"captureFPS"`
 	TotalFrames        uint64     `json:"totalFrames"`
-	LastMotionAt       *time.Time `json:"lastMotionAt,omitempty"`
 	LastRecordingAt    *time.Time `json:"lastRecordingAt,omitempty"`
 	LastRecordingName  string     `json:"lastRecordingName,omitempty"`
 	DiskFreeBytes      *int64     `json:"diskFreeBytes,omitempty"`
@@ -30,6 +29,7 @@ type Snapshot struct {
 	SlimMode           bool       `json:"slimMode"`
 	Audio              string     `json:"audio,omitempty"`
 	AudioDetail        string     `json:"audioDetail,omitempty"`
+	SlimDetail         string     `json:"slimDetail,omitempty"`
 }
 
 type Status struct {
@@ -75,7 +75,7 @@ func Read(path string, now time.Time) Status {
 		return unknown
 	}
 	switch snapshot.CaptureMode {
-	case "", "off", "live", "recording", "timed":
+	case "", "off", "live", "timed":
 	default:
 		return unknown
 	}

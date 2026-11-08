@@ -31,6 +31,7 @@ func TestReadFramesGracePauseStaleAndUnknownStates(t *testing.T) {
 		{"live only", func(s *Snapshot) { s.LiveStandby = true; s.CaptureMode = "live" }, "running", "receiving", true},
 		{"timed recording", func(s *Snapshot) { s.LiveStandby = true; s.CaptureMode = "timed" }, "running", "receiving", true},
 		{"retired scheduled mode", func(s *Snapshot) { s.CaptureMode = "scheduled" }, "unknown", "unknown", false},
+		{"retired motion mode", func(s *Snapshot) { s.CaptureMode = "recording" }, "unknown", "unknown", false},
 		{"sound on", func(s *Snapshot) { s.LiveStandby = true; s.CaptureMode = "live"; s.Audio = "on" }, "running", "receiving", true},
 		{"sound unavailable", func(s *Snapshot) { s.Audio = "unavailable"; s.AudioDetail = "마이크 권한 필요" }, "running", "receiving", true},
 		{"unknown sound state", func(s *Snapshot) { s.Audio = "loud" }, "unknown", "unknown", false},

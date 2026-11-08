@@ -41,6 +41,12 @@ type Bot struct {
 	Now            func() time.Time
 	Sleep          func(context.Context, time.Duration)
 	Logf           func(string, ...any)
+	// Reports when a web viewer last renewed the live lease; nil when the gateway has no server.
+	ViewerSeen func() time.Time
+	// The window closes this long after the last web viewer renewal, or this long after it
+	// opened when no viewer ever came.
+	ViewerGone      time.Duration
+	NoViewerTimeout time.Duration
 	Background     func(func())
 	PollTimeout    time.Duration
 	RenewEvery     time.Duration
@@ -55,8 +61,9 @@ type Bot struct {
 // state survives the gateway restarts that every sleep/wake cycle causes. Without the offset
 // each wake would replay the same commands; without the window a restart would drop the camera.
 type state struct {
-	Offset      int64      `json:"offset"`
-	WindowUntil *time.Time `json:"windowUntil,omitempty"`
+	Offset          int64      `json:"offset"`
+	WindowUntil     *time.Time `json:"windowUntil,omitempty"`
+	WindowStartedAt *time.Time `json:"windowStartedAt,omitempty"`
 }
 
 type command int
@@ -101,6 +108,8 @@ func New(config Config, origin, demandFile, statusFile, stateFile string) *Bot {
 		Now:            time.Now,
 		Sleep:          sleepContext,
 		Logf:           log.Printf,
+		ViewerGone:     90 * time.Second,
+		NoViewerTimeout: 3 * time.Minute,
 		Background:     func(work func()) { go work() },
 		PollTimeout:    25 * time.Second,
 		RenewEvery:     5 * time.Second,
@@ -241,9 +250,16 @@ func (b *Bot) confirmCameraStart(ctx context.Context, requestedAt time.Time) str
 
 func (b *Bot) statusText(now time.Time) string {
 	status := health.Read(b.StatusFile, now)
-	text := "상태: " + describe(status)
+	label := describe(status)
+	text := "상태: " + label
 	if status.Available {
-		text += " · " + status.Detail
+		// The app's detail often starts with the same words as the label; say them once.
+		if detail := strings.TrimPrefix(status.Detail, stateLabel(status.State)+" · "); detail != "" && detail != stateLabel(status.State) {
+			text += " · " + detail
+		}
+		if status.SlimDetail != "" {
+			text += " · 슬림: " + status.SlimDetail
+		}
 		if status.Audio == "unavailable" {
 			text += " · 소리 없음"
 			if status.AudioDetail != "" {
@@ -263,20 +279,23 @@ func (b *Bot) statusText(now time.Time) string {
 	return text
 }
 
+var stateLabels = map[string]string{
+	"running": "카메라 켜짐", "starting": "카메라 시작 중", "stopped": "카메라 꺼짐", "stopping": "카메라 정리 중",
+	"standby": "원격 대기 중", "scheduledRest": "예약 휴식 중", "sleeping": "시스템 잠자기",
+	"recovering": "카메라 복구 중", "failed": "카메라 오류", "stale": "앱 상태 갱신 지연",
+}
+
+func stateLabel(state string) string {
+	if label, ok := stateLabels[state]; ok {
+		return label
+	}
+	return "상태 확인 불가"
+}
+
 // describe mirrors the labels the web page shows for the same states.
 func describe(status health.Status) string {
-	labels := map[string]string{
-		"running": "카메라 켜짐", "starting": "카메라 시작 중", "stopped": "카메라 꺼짐", "stopping": "카메라 정리 중",
-		"standby": "원격 대기 중", "scheduledRest": "예약 휴식 중", "sleeping": "시스템 잠자기",
-		"recovering": "카메라 복구 중", "failed": "카메라 오류", "stale": "앱 상태 갱신 지연",
-	}
-	label, ok := labels[status.State]
-	if !ok {
-		label = "상태 확인 불가"
-	}
+	label := stateLabel(status.State)
 	switch status.CaptureMode {
-	case "recording":
-		label += " · 움직임 녹화"
 	case "timed":
 		label += " · 원격 녹화"
 	case "live":
@@ -349,6 +368,7 @@ func (b *Bot) renewLoop(ctx context.Context) {
 func (b *Bot) renewOnce(now time.Time) {
 	b.mu.Lock()
 	until := b.state.WindowUntil
+	started := b.state.WindowStartedAt
 	expired := until != nil && !now.Before(*until)
 	if expired {
 		b.state.WindowUntil = nil
@@ -362,6 +382,25 @@ func (b *Bot) renewOnce(now time.Time) {
 		b.Logf("telegram: viewing request ended")
 		return
 	}
+	// The window exists to bring the camera up until the owner opens the link. Once a web
+	// viewer has renewed the lease and then left, or when nobody opened it at all, the
+	// window has done its job; keeping the camera on would also keep a slim-mode Mac awake.
+	if b.ViewerSeen != nil && started != nil {
+		seen := b.ViewerSeen()
+		viewerCame := !seen.IsZero() && seen.After(*started)
+		if viewerCame && now.Sub(seen) > b.ViewerGone {
+			b.setWindow(nil)
+			b.Logf("telegram: viewing request ended, the web viewer left")
+			b.reply(context.Background(), "웹 시청이 끝나 카메라 요청을 끝냈습니다. 다시 보려면 '카메라'라고 보내세요.")
+			return
+		}
+		if !viewerCame && now.Sub(*started) > b.NoViewerTimeout {
+			b.setWindow(nil)
+			b.Logf("telegram: viewing request ended, nobody opened the link")
+			b.reply(context.Background(), fmt.Sprintf("%d분 동안 아무도 열지 않아 카메라 요청을 끝냈습니다. 다시 보려면 '카메라'라고 보내세요.", int(b.NoViewerTimeout.Minutes())))
+			return
+		}
+	}
 	if err := health.RecordLiveDemand(b.DemandFile, now); err != nil {
 		b.Logf("telegram: lease write failed: %v", err)
 	}
@@ -370,6 +409,11 @@ func (b *Bot) renewOnce(now time.Time) {
 func (b *Bot) setWindow(until *time.Time) {
 	b.mu.Lock()
 	b.state.WindowUntil = until
+	b.state.WindowStartedAt = nil
+	if until != nil {
+		started := b.Now()
+		b.state.WindowStartedAt = &started
+	}
 	b.persistLocked()
 	b.mu.Unlock()
 }

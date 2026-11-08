@@ -8,12 +8,16 @@ set -euo pipefail
 
 SUDOERS_DIR="${MACMONITOR_SUDOERS_DIR:-/etc/sudoers.d}"
 RULE_FILE="$SUDOERS_DIR/macmonitor"
+# Run as the login user: the rule must name the account the app runs under, and the script
+# asks for the password itself where it needs one.
 USER_NAME="${MACMONITOR_USER:-$(id -un)}"
 
 fail() {
     echo "error: $*" >&2
     exit 1
 }
+
+[[ -z "${SUDO_USER:-}" && "$USER_NAME" != root ]] || fail "run this script without sudo, as the user who uses MacMonitor; it asks for the password itself"
 
 [[ "$USER_NAME" =~ ^[A-Za-z_][A-Za-z0-9._-]*$ ]] || fail "the user name '$USER_NAME' cannot be written into a sudoers rule"
 command -v visudo >/dev/null 2>&1 || fail "visudo is required"

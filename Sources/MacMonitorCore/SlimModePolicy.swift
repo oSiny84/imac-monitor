@@ -30,13 +30,15 @@ public struct SlimModeSettings: Codable, Equatable {
 
 /// The decisions behind slim mode, kept free of AppKit and IOKit so they can be tested here.
 public struct SlimModePolicy {
-    /// After launch or a wake the Mac stays up this long so the gateway can come back and the
-    /// chat bot can fetch a pending request.
-    public var checkWindow: TimeInterval = 60
+    /// After launch or a wake the Mac stays up this long so Wi-Fi can reconnect, the gateway
+    /// can come back and the chat bot can fetch a pending request.
+    public var checkWindow: TimeInterval = 90
     /// After a viewer leaves or a recording ends, the Mac stays up this long.
     public var graceAfterCapture: TimeInterval = 60
-    /// Someone typing or moving the mouse within this time is treated as present.
-    public var idleBeforeSleep: TimeInterval = 600
+    /// Someone typing or moving the mouse within this time is treated as present. Energy
+    /// Saver's own idle sleep is no fallback (sharing services often hold it off), so this is
+    /// the only presence timer there is.
+    public var idleBeforeSleep: TimeInterval = 300
     /// Wall-clock time that passed while uptime did not: the Mac slept.
     public var sleepGapThreshold: TimeInterval = 30
 
@@ -59,9 +61,12 @@ public struct SlimModePolicy {
         public var wakeUptime: TimeInterval
         public var captureEndedUptime: TimeInterval?
         public var secondsSinceInput: TimeInterval
+        /// True once the Mac has slept and woken during this run; false after launch.
+        public var wokeFromSleep: Bool
 
         public init(enabled: Bool, canScheduleWake: Bool, captureWanted: Bool, uptime: TimeInterval,
-                    wakeUptime: TimeInterval, captureEndedUptime: TimeInterval?, secondsSinceInput: TimeInterval) {
+                    wakeUptime: TimeInterval, captureEndedUptime: TimeInterval?, secondsSinceInput: TimeInterval,
+                    wokeFromSleep: Bool = false) {
             self.enabled = enabled
             self.canScheduleWake = canScheduleWake
             self.captureWanted = captureWanted
@@ -69,6 +74,7 @@ public struct SlimModePolicy {
             self.wakeUptime = wakeUptime
             self.captureEndedUptime = captureEndedUptime
             self.secondsSinceInput = secondsSinceInput
+            self.wokeFromSleep = wokeFromSleep
         }
     }
 
@@ -79,8 +85,42 @@ public struct SlimModePolicy {
         if inputs.captureWanted { return .holdAwake }
         if inputs.uptime - inputs.wakeUptime < checkWindow { return .holdAwake }
         if let ended = inputs.captureEndedUptime, inputs.uptime - ended < graceAfterCapture { return .holdAwake }
+        // The click that put the Mac to sleep, or a keystroke from before it slept, is not
+        // presence after the wake: nobody has touched the Mac since. Without this a 5-minute
+        // wake cycle never reaches sleepNow again, because the idle clock pauses during sleep.
+        if inputs.wokeFromSleep, !inputDuringThisWake(inputs) { return .sleepNow }
         if inputs.secondsSinceInput < idleBeforeSleep { return .allowIdleSleep }
         return .sleepNow
+    }
+
+    /// Whether the last input happened after the Mac last woke. The keypress that wakes a Mac
+    /// can be stamped a moment before the app records the wake, so a few seconds count as after.
+    public func inputDuringThisWake(_ inputs: Inputs) -> Bool {
+        inputs.secondsSinceInput < inputs.uptime - inputs.wakeUptime + wakeInputTolerance
+    }
+
+    public var wakeInputTolerance: TimeInterval = 5
+
+    /// The decision in the owner's words, for the status board and the Telegram 상태 reply. The
+    /// first rule that applies is the one named, in the same order decide() uses, so the text
+    /// always explains the decision actually taken.
+    public func explain(_ inputs: Inputs) -> String {
+        guard inputs.enabled else { return "슬림 모드 꺼짐 · 항상 깨어 있음" }
+        guard inputs.canScheduleWake else { return "깨우기 예약 확인 실패 · 안전을 위해 깨어 있음" }
+        if inputs.captureWanted { return "카메라 사용 중 · 깨어 있음" }
+        let sinceWake = inputs.uptime - inputs.wakeUptime
+        if sinceWake < checkWindow {
+            return "깨어난 지 \(Int(sinceWake))초 · \(Int(checkWindow - sinceWake) + 1)초 뒤 판단"
+        }
+        if let ended = inputs.captureEndedUptime, inputs.uptime - ended < graceAfterCapture {
+            return "카메라 꺼진 지 \(Int(inputs.uptime - ended))초 · \(Int(graceAfterCapture - (inputs.uptime - ended)) + 1)초 뒤 판단"
+        }
+        if inputs.wokeFromSleep, !inputDuringThisWake(inputs) { return "깨어난 뒤 입력 없음 · 잠자기 요청" }
+        if inputs.secondsSinceInput < idleBeforeSleep {
+            let remaining = Int((idleBeforeSleep - inputs.secondsSinceInput) / 60) + 1
+            return "마지막 입력 \(Int(inputs.secondsSinceInput / 60))분 전 · 입력 없이 \(remaining)분 더 지나면 잠듦"
+        }
+        return "잠자기 요청"
     }
 
     /// When to wake next for the periodic check, or nil without slim mode. Never earlier than a

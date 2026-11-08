@@ -4,38 +4,28 @@ public struct RetentionPolicy {
     public let maximumAge: TimeInterval
     public let maximumBytes: Int64
     public let minimumFreeBytes: Int64
-    public let preRoll: TimeInterval
-    public let postRoll: TimeInterval
+    /// Length of the clips FFmpeg writes. A clip is moved out of the spool this long plus a
+    /// margin after its start, once FFmpeg has closed it.
     public let segmentDuration: TimeInterval
-    /// Scheduled recording keeps every closed clip; motion recording keeps only what a motion
-    /// window claims. The size, age and free-space limits apply either way.
-    public let keepEverySegment: Bool
 
     public init(
         maximumAge: TimeInterval,
         maximumBytes: Int64,
         minimumFreeBytes: Int64,
-        preRoll: TimeInterval = 5,
-        postRoll: TimeInterval = 15,
-        segmentDuration: TimeInterval = 5,
-        keepEverySegment: Bool = false
+        segmentDuration: TimeInterval = 600
     ) {
         self.maximumAge = maximumAge
         self.maximumBytes = maximumBytes
         self.minimumFreeBytes = minimumFreeBytes
-        self.preRoll = preRoll
-        self.postRoll = postRoll
         self.segmentDuration = segmentDuration
-        self.keepEverySegment = keepEverySegment
     }
 }
 
+/// Moves closed clips from the spool into the recordings folder and keeps that folder within
+/// the age, size and free-space limits. Every clip is kept: a recording is something the owner
+/// started on purpose, so there is nothing to select from it. Protected recordings are never
+/// deleted; the web's own delete takes the same lock this pass takes.
 public final class RecordingRetentionManager {
-    private struct MotionWindow {
-        var start: Date
-        var end: Date
-    }
-
     private struct OwnedFile {
         let url: URL
         let start: Date
@@ -45,10 +35,8 @@ public final class RecordingRetentionManager {
     private let spoolDirectory: URL
     private let recordingsDirectory: URL
     private let policy: RetentionPolicy
-    private let eventMerger: RecordingEventMerging?
     private let queue = DispatchQueue(label: "com.macmonitor.recording-retention")
     private var timer: DispatchSourceTimer?
-    private var motionWindows: [MotionWindow] = []
     private let onWarning: ((String?) -> Void)?
     private let onPromoted: ((URL) -> Void)?
     private var lastWarning: String?
@@ -59,23 +47,6 @@ public final class RecordingRetentionManager {
         self.spoolDirectory = spoolDirectory
         self.recordingsDirectory = recordingsDirectory
         self.policy = policy
-        eventMerger = nil
-        self.onWarning = onWarning
-        self.onPromoted = onPromoted
-    }
-
-    init(
-        spoolDirectory: URL,
-        recordingsDirectory: URL,
-        policy: RetentionPolicy,
-        eventMerger: RecordingEventMerging,
-        onWarning: ((String?) -> Void)? = nil,
-        onPromoted: ((URL) -> Void)? = nil
-    ) {
-        self.spoolDirectory = spoolDirectory
-        self.recordingsDirectory = recordingsDirectory
-        self.policy = policy
-        self.eventMerger = eventMerger
         self.onWarning = onWarning
         self.onPromoted = onPromoted
     }
@@ -93,25 +64,8 @@ public final class RecordingRetentionManager {
         }
     }
 
-    public func recordMotion(at timestamp: Date) {
-        queue.async { [weak self] in
-            guard let self else { return }
-            let start = timestamp.addingTimeInterval(-self.policy.preRoll)
-            let end = timestamp.addingTimeInterval(self.policy.postRoll)
-            // Two disjoint windows can still need the same five-second segment. Treat
-            // nearby windows as one event; otherwise merging the first event consumes
-            // the shared segment before the second event can include its pre-roll.
-            if var latest = self.motionWindows.last,
-               start <= latest.end.addingTimeInterval(self.policy.segmentDuration) {
-                latest.end = max(latest.end, end)
-                latest.start = min(latest.start, start)
-                self.motionWindows[self.motionWindows.count - 1] = latest
-            } else {
-                self.motionWindows.append(MotionWindow(start: start, end: end))
-            }
-        }
-    }
-
+    /// Stops the timer and promotes whatever is left in the spool, so the clip FFmpeg just
+    /// closed at the end of a recording is not lost.
     public func stopAndFinalize() {
         queue.sync {
             timer?.cancel()
@@ -121,75 +75,23 @@ public final class RecordingRetentionManager {
     }
 
     /// Runs a single time-gated maintenance pass as if the clock read `now`.
-    /// Tests use this to exercise the promotion and merge gates without waiting for the timer.
+    /// Tests use this to exercise the promotion gate without waiting for the timer.
     func runMaintenance(now: Date) {
         queue.sync { scan(now: now, finalizing: false) }
     }
 
-    /// The moment a spool segment may be promoted or discarded, once no later motion can
-    /// still claim it.
-    ///
-    /// `mergeFinalizedEvents` derives its own gate from this same function so that a merge
-    /// never runs before every segment it needs has reached `recordingsDirectory`. A window
-    /// can only overlap segments starting strictly before `window.end`, so waiting until
-    /// this moment computed for `window.end` covers all of them.
+    /// A clip is only safe to move once FFmpeg has closed it. Ten seconds past its nominal end
+    /// covers a late keyframe.
     private func promotionDecisionTime(segmentStart: Date) -> Date {
-        // A remote clip is long and no later motion window can claim it, so it only waits
-        // for FFmpeg to close the file. Ten seconds covers a late keyframe.
-        if policy.keepEverySegment { return segmentStart.addingTimeInterval(policy.segmentDuration + 10) }
-        return segmentStart.addingTimeInterval(policy.segmentDuration + policy.preRoll + 2)
+        segmentStart.addingTimeInterval(policy.segmentDuration + 10)
     }
 
     private func scan(now: Date, finalizing: Bool) {
         for file in files(in: spoolDirectory) {
-            let segmentEnd = file.start.addingTimeInterval(policy.segmentDuration)
             guard finalizing || now >= promotionDecisionTime(segmentStart: file.start) else { continue }
-
-            let keep = policy.keepEverySegment || motionWindows.contains { window in
-                file.start < window.end && segmentEnd > window.start
-            }
-            if keep {
-                if let destination = moveToRecordings(file.url) { onPromoted?(destination) }
-            } else {
-                try? FileManager.default.removeItem(at: file.url)
-            }
+            if let destination = moveToRecordings(file.url) { onPromoted?(destination) }
         }
-        mergeFinalizedEvents(now: now, finalizing: finalizing)
-        motionWindows.removeAll { $0.end < now.addingTimeInterval(-3600) }
         enforceRetention(now: now)
-    }
-
-    private func mergeFinalizedEvents(now: Date, finalizing: Bool) {
-        guard let eventMerger else { return }
-        var completedIndexes: [Int] = []
-        for (index, window) in motionWindows.enumerated() {
-            let readyAt = promotionDecisionTime(segmentStart: window.end)
-            guard finalizing || now >= readyAt else { continue }
-            let segments = files(in: recordingsDirectory)
-                .filter { file in
-                    file.url.lastPathComponent.hasPrefix("segment-") &&
-                        file.start < window.end &&
-                        file.start.addingTimeInterval(policy.segmentDuration) > window.start
-                }
-                .sorted { $0.start < $1.start }
-            guard !segments.isEmpty else { continue }
-            do {
-                try eventMerger.merge(
-                    segmentURLs: segments.map(\.url),
-                    eventStart: window.start,
-                    destinationDirectory: recordingsDirectory
-                )
-                for segment in segments {
-                    try? FileManager.default.removeItem(at: segment.url)
-                }
-                completedIndexes.append(index)
-            } catch {
-                continue
-            }
-        }
-        for index in completedIndexes.reversed() {
-            motionWindows.remove(at: index)
-        }
     }
 
     private func moveToRecordings(_ source: URL) -> URL? {

@@ -16,6 +16,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"macmonitor.local/gateway/internal/auth"
@@ -39,6 +40,17 @@ type Server struct {
 	mediaProxy   *httputil.ReverseProxy
 	httpClient   *http.Client
 	static       http.Handler
+	// Unix nanoseconds of the last live-lease renewal by a web viewer; read by the chat bot.
+	lastViewerDemand atomic.Int64
+}
+
+// LastViewerDemand is when a logged-in web viewer last asked for the camera, or zero.
+func (s *Server) LastViewerDemand() time.Time {
+	nanos := s.lastViewerDemand.Load()
+	if nanos == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, nanos)
 }
 
 func New(cfg config.Config) (*Server, error) {
@@ -241,11 +253,13 @@ func (s *Server) recordLiveDemand(writer http.ResponseWriter, request *http.Requ
 		writeError(writer, http.StatusServiceUnavailable, "실시간 요청 경로가 설정되지 않았습니다.")
 		return
 	}
-	if err := health.RecordLiveDemand(s.config.LiveDemandFile, time.Now()); err != nil {
+	now := time.Now()
+	if err := health.RecordLiveDemand(s.config.LiveDemandFile, now); err != nil {
 		log.Printf("live demand write failed: %v", err)
 		writeError(writer, http.StatusInternalServerError, "실시간 요청을 앱에 전달하지 못했습니다.")
 		return
 	}
+	s.lastViewerDemand.Store(now.UnixNano())
 	writer.WriteHeader(http.StatusNoContent)
 }
 

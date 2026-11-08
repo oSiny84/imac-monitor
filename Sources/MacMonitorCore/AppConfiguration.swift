@@ -4,15 +4,10 @@ public struct AppConfiguration: Codable, Equatable {
     public var cameraUniqueID: String?
     public var externalWebRTCHosts: [String]
     public var videoBitrateKbps: Int
-    public var motionPixelThreshold: Double
-    public var motionChangedFraction: Double
     public var retentionDays: Int
     public var retentionMaxGigabytes: Double
     public var minimumFreeGigabytes: Double
-    public var preRollSeconds: Int
-    public var postRollSeconds: Int
     public var sleepSchedule: DailySleepSchedule
-    public var motionRegions: MotionRegions
     /// Lets an authenticated web viewer turn the camera on or start a timed recording. Off
     /// refuses both.
     public var liveStandby: Bool
@@ -25,15 +20,10 @@ public struct AppConfiguration: Codable, Equatable {
         cameraUniqueID: String? = nil,
         externalWebRTCHosts: [String] = [],
         videoBitrateKbps: Int = 1_200,
-        motionPixelThreshold: Double = 18,
-        motionChangedFraction: Double = 0.025,
         retentionDays: Int = 14,
         retentionMaxGigabytes: Double = 20,
         minimumFreeGigabytes: Double = 5,
-        preRollSeconds: Int = 30,
-        postRollSeconds: Int = 30,
         sleepSchedule: DailySleepSchedule = DailySleepSchedule(),
-        motionRegions: MotionRegions = MotionRegions(),
         slimMode: SlimModeSettings = SlimModeSettings(),
         liveStandby: Bool = true,
         audioEnabled: Bool = true
@@ -41,28 +31,22 @@ public struct AppConfiguration: Codable, Equatable {
         self.cameraUniqueID = cameraUniqueID
         self.externalWebRTCHosts = externalWebRTCHosts
         self.videoBitrateKbps = videoBitrateKbps
-        self.motionPixelThreshold = motionPixelThreshold
-        self.motionChangedFraction = motionChangedFraction
         self.retentionDays = retentionDays
         self.retentionMaxGigabytes = retentionMaxGigabytes
         self.minimumFreeGigabytes = minimumFreeGigabytes
-        self.preRollSeconds = preRollSeconds
-        self.postRollSeconds = postRollSeconds
         self.sleepSchedule = sleepSchedule
-        self.motionRegions = motionRegions
         self.slimMode = slimMode
         self.liveStandby = liveStandby
         self.audioEnabled = audioEnabled
     }
 
+    // Settings files from earlier builds also carry motion-recording keys (motionPixelThreshold,
+    // motionChangedFraction, preRollSeconds, postRollSeconds, motionRegions) and, from the
+    // 2026-11-08 daytime build, recordingSchedule. Keyed decoding ignores keys not listed here.
     private enum CodingKeys: String, CodingKey {
         case cameraUniqueID, externalWebRTCHosts, videoBitrateKbps
-        case motionPixelThreshold, motionChangedFraction, retentionDays
-        case retentionMaxGigabytes, minimumFreeGigabytes
-        case preRollSeconds, postRollSeconds, sleepSchedule
-        // A settings file written by the 2026-11-08 build may still carry a recordingSchedule
-        // key; keyed decoding ignores keys that are not listed here.
-        case motionRegions, liveStandby, slimMode, audioEnabled
+        case retentionDays, retentionMaxGigabytes, minimumFreeGigabytes
+        case sleepSchedule, liveStandby, slimMode, audioEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -70,16 +54,11 @@ public struct AppConfiguration: Codable, Equatable {
         cameraUniqueID = try values.decodeIfPresent(String.self, forKey: .cameraUniqueID)
         externalWebRTCHosts = try values.decode([String].self, forKey: .externalWebRTCHosts)
         videoBitrateKbps = try values.decode(Int.self, forKey: .videoBitrateKbps)
-        motionPixelThreshold = try values.decode(Double.self, forKey: .motionPixelThreshold)
-        motionChangedFraction = try values.decode(Double.self, forKey: .motionChangedFraction)
         retentionDays = try values.decode(Int.self, forKey: .retentionDays)
         retentionMaxGigabytes = try values.decode(Double.self, forKey: .retentionMaxGigabytes)
         minimumFreeGigabytes = try values.decode(Double.self, forKey: .minimumFreeGigabytes)
         // Preserve the previous behavior when upgrading an existing installation.
-        preRollSeconds = try values.decodeIfPresent(Int.self, forKey: .preRollSeconds) ?? 5
-        postRollSeconds = try values.decodeIfPresent(Int.self, forKey: .postRollSeconds) ?? 15
         sleepSchedule = try values.decodeIfPresent(DailySleepSchedule.self, forKey: .sleepSchedule) ?? DailySleepSchedule()
-        motionRegions = try values.decodeIfPresent(MotionRegions.self, forKey: .motionRegions) ?? MotionRegions()
         liveStandby = try values.decodeIfPresent(Bool.self, forKey: .liveStandby) ?? true
         slimMode = try values.decodeIfPresent(SlimModeSettings.self, forKey: .slimMode) ?? SlimModeSettings()
         // Sound is on unless the owner turned it off; earlier settings files never had the key.
@@ -92,8 +71,8 @@ public struct AppConfiguration: Codable, Equatable {
         return configuration
     }
 
-    /// Settings must be able to repair an older motion mask rejected by newer
-    /// sampling rules. Runtime consumers must keep using loadOrCreate().
+    /// Settings and the runtime read the same file; the name remains from when the settings
+    /// window could repair a value the runtime rejected.
     public static func loadOrCreateForEditing() throws -> AppConfiguration {
         try AppDirectories.prepare()
         if FileManager.default.fileExists(atPath: AppDirectories.configuration.path) {
@@ -108,9 +87,7 @@ public struct AppConfiguration: Codable, Equatable {
 
     public static func decodeForEditing(_ data: Data) throws -> AppConfiguration {
         let configuration = try JSONDecoder().decode(AppConfiguration.self, from: data)
-        var checked = configuration
-        checked.motionRegions = MotionRegions()
-        try checked.validate()
+        try configuration.validate()
         return configuration
     }
 
@@ -128,18 +105,10 @@ public struct AppConfiguration: Codable, Equatable {
     }
 
     public func validate() throws {
-        guard (0...300).contains(preRollSeconds), (5...300).contains(postRollSeconds) else {
-            throw AppConfigurationError.invalid("움직임 전 0~300초 / 후 5~300초")
-        }
         try sleepSchedule.validate()
-        try motionRegions.validate()
         try slimMode.validate()
         guard (250...10_000).contains(videoBitrateKbps) else {
             throw AppConfigurationError.invalid("videoBitrateKbps")
-        }
-        guard (1...100).contains(motionPixelThreshold),
-              (0.001...0.8).contains(motionChangedFraction) else {
-            throw AppConfigurationError.invalid("motion sensitivity")
         }
         guard (1...3650).contains(retentionDays),
               (0.1...10_000).contains(retentionMaxGigabytes),

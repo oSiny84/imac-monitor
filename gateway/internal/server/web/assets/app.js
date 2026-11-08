@@ -215,12 +215,12 @@
     const fps = fresh && health.expectingFrames && Number.isFinite(health.captureFPS) ? `${health.captureFPS.toFixed(1)} fps` : "—";
     document.querySelector("#capture-fps").textContent = fps;
     document.querySelector("#recording-mode").textContent = !fresh ? "—"
-      : health.captureMode === "recording" ? "켜짐 · 움직임" : health.captureMode === "timed" ? "켜짐 · 원격" : "꺼짐";
+      : health.captureMode === "timed" ? "켜짐 · 원격" : "꺼짐";
     document.querySelector("#audio-state").textContent = !fresh ? "—"
       : health.audio === "on" ? "켜짐" : health.audio === "unavailable" ? `없음 · ${health.audioDetail || "원인 미확인"}`
       : health.audio === "off" ? "꺼짐 (설정)" : "—";
+    document.querySelector("#slim-state").textContent = !fresh ? "—" : health.slimDetail || (health.slimMode ? "켜짐" : "꺼짐");
     document.querySelector("#last-frame").textContent = formatTime(health?.lastFrameAt);
-    document.querySelector("#last-motion").textContent = formatTime(health?.lastMotionAt);
     document.querySelector("#last-recording").textContent = formatTime(health?.lastRecordingAt);
     document.querySelector("#disk-free").textContent = available && Number.isFinite(health.diskFreeBytes) ? formatBytes(health.diskFreeBytes) : "—";
     document.querySelector("#watchdog-count").textContent = available && Number.isInteger(health.watchdogRecoveries) ? `${health.watchdogRecoveries}회` : "—";

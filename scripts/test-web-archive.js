@@ -36,11 +36,11 @@ async function fixture(mediaOnline, options = {}) {
   const ids = ["login-panel", "app", "connection", "login-form", "login-error", "live-player",
     "live-unavailable", "media-status", "recordings", "recordings-empty", "recording-template",
     "logout", "reload-live", "refresh-recordings", "live-view", "recordings-view", "monitor-state", "monitor-detail",
-    "capture-fps", "last-frame", "last-motion", "last-recording", "disk-free", "watchdog-count",
+    "capture-fps", "last-frame", "last-recording", "disk-free", "watchdog-count",
     "recording-from", "recording-to", "recording-filter", "clear-recording-filter", "recording-results", "recording-timezone",
     "previous-recordings", "next-recordings", "recording-page", "protected-only", "protection-summary",
     "protection-warning", "protection-message", "retention-warning", "live-quality", "live-waiting", "recording-mode",
-    "record-hours", "record-start", "record-stop", "record-state", "audio-state"];
+    "record-hours", "record-start", "record-stop", "record-state", "audio-state", "slim-state"];
   const elements = Object.fromEntries(ids.map((id) => [id, new Element()]));
   elements["recording-template"].content = { firstElementChild: { cloneNode() {
     const card = new Element();
@@ -501,16 +501,13 @@ test("video loads only once real frames arrive, then polling keeps it through a 
   assert.equal(elements["live-player"].src, loaded, "a playing stream must not be torn down by one stale status");
 });
 
-test("the recording cell tells remote recording from motion recording", async () => {
+test("the recording cell tells remote recording from live viewing", async () => {
   const { elements, api, tick } = await fixture(false, { monitoring: standby() });
   api.mediaOnline = true;
   const running = (captureMode) => standby({ state: "running", frameState: "receiving", expectingFrames: true, captureMode, captureFPS: 15 });
   api.monitoring = running("timed");
   await tick();
   assert.equal(elements["recording-mode"].textContent, "켜짐 · 원격");
-  api.monitoring = running("recording");
-  await tick();
-  assert.equal(elements["recording-mode"].textContent, "켜짐 · 움직임");
   api.monitoring = running("live");
   await tick();
   assert.equal(elements["recording-mode"].textContent, "꺼짐");
@@ -532,6 +529,10 @@ test("the sound cell reports on, a missing microphone permission, and off", asyn
   api.monitoring = standby();
   await tick();
   assert.equal(elements["audio-state"].textContent, "—");
+  assert.equal(elements["slim-state"].textContent, "꺼짐");
+  api.monitoring = standby({ slimMode: true, slimDetail: "마지막 입력 2분 전 · 입력 없이 8분 더 지나면 잠듦" });
+  await tick();
+  assert.equal(elements["slim-state"].textContent, "마지막 입력 2분 전 · 입력 없이 8분 더 지나면 잠듦", "the owner sees why the Mac is still awake");
 });
 
 test("remote recording starts for the chosen hours, shows the remaining time from the app's view, and stops on demand", async () => {

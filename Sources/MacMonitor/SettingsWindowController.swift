@@ -12,13 +12,9 @@ final class SettingsWindowController: NSWindowController {
     private let audioCheckbox = NSButton(checkboxWithTitle: "소리 녹음·전송 (마이크, 다음 카메라 시작부터)", target: nil, action: nil)
     private let hostsField = NSTextField()
     private let bitrateField = NSTextField()
-    private let thresholdField = NSTextField()
-    private let fractionField = NSTextField()
     private let retentionDaysField = NSTextField()
     private let maximumStorageField = NSTextField()
     private let minimumFreeField = NSTextField()
-    private let preRollPopup = NSPopUpButton()
-    private let postRollPopup = NSPopUpButton()
     private let scheduleCheckbox = NSButton(checkboxWithTitle: "매일 예약 사용", target: nil, action: nil)
     private let restModePopup = NSPopUpButton()
     private let sleepPicker = NSDatePicker()
@@ -26,13 +22,10 @@ final class SettingsWindowController: NSWindowController {
     private let slimModeCheckbox = NSButton(checkboxWithTitle: "슬림 모드 (대기 중 Mac 잠자기 허용, 주기적으로 깨어나 확인)", target: nil, action: nil)
     private let wakeIntervalPopup = NSPopUpButton()
     private let statusLabel = NSTextField(labelWithString: "")
-    private var motionRegions = MotionRegions()
-    private var regionEditor: MotionRegionEditor?
-    var previewLayerProvider: (() -> AVCaptureVideoPreviewLayer)?
 
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 870),
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 720),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -48,12 +41,6 @@ final class SettingsWindowController: NSWindowController {
         guard let contentView = window?.contentView else { return }
         let title = NSTextField(labelWithString: "원격 시청 및 녹화 설정")
         title.font = .systemFont(ofSize: 20, weight: .semibold)
-        for (popup, values) in [(preRollPopup, [0, 5, 15, 30, 60, 120, 300]), (postRollPopup, [5, 15, 30, 60, 120, 300])] {
-            for seconds in values {
-                popup.addItem(withTitle: seconds < 60 ? "\(seconds)초" : "\(seconds / 60)분")
-                popup.lastItem?.tag = seconds
-            }
-        }
         for picker in [sleepPicker, wakePicker] {
             picker.datePickerStyle = .textFieldAndStepper
             picker.datePickerElements = .hourMinute
@@ -72,11 +59,6 @@ final class SettingsWindowController: NSWindowController {
             row("앱 실행", launchAtLoginCheckbox),
             row("외부 WebRTC 호스트", hostsField),
             row("비디오 비트레이트 (kbps)", bitrateField),
-            row("픽셀 차이 임계값", thresholdField),
-            row("변화 픽셀 비율", fractionField),
-            row("감지·제외 영역", NSButton(title: "영역 편집…", target: self, action: #selector(editRegions))),
-            row("움직임 전 보존", preRollPopup),
-            row("마지막 움직임 후 보존", postRollPopup),
             row("보관 기간 (일)", retentionDaysField),
             row("최대 녹화 용량 (GB)", maximumStorageField),
             row("최소 디스크 여유 (GB)", minimumFreeField),
@@ -92,7 +74,7 @@ final class SettingsWindowController: NSWindowController {
         grid.column(at: 0).xPlacement = .trailing
         grid.column(at: 1).xPlacement = .fill
 
-        let note = NSTextField(wrappingLabelWithString: "원격 시청은 메뉴의 원격 시청 대기로 켜고 끕니다. 원격 녹화는 웹의 실시간 화면에서 시간을 골라 시작하며, 접속을 끊어도 그 시간까지 움직임과 상관없이 연속으로 저장합니다. 1,200kbps에서 시간당 약 0.5GB이고 최대 녹화 용량을 넘으면 오래된 파일부터 지웁니다. 슬림 모드는 scripts/enable-slim-mode.sh로 깨우기 예약 권한을 넣은 뒤 켭니다. 켜면 시청자·녹화가 없고 입력이 10분 없을 때 Mac이 잠들고, 확인 간격마다 약 1분 깨어나 텔레그램 요청을 확인합니다. 움직임 녹화의 임계값·보존·보관 값은 녹화를 켤 때만 쓰입니다. 움직임 없는 구간은 임시 버퍼에서 삭제됩니다. 시스템 잠자기는 1분 전 녹화를 정리하고, 예약 깨우기 후 화면을 끕니다(잠깐 켜질 수 있음). 화면만 끄기는 시스템을 유지하되 휴식 중 녹화는 중단합니다. 두 모드 모두 정해진 시각에 녹화를 재개합니다. 앱을 실행·인증한 채 두세요. 키보드·마우스 사용은 우선하며, 로그아웃·재부팅 후에는 재인증이 필요합니다.")
+        let note = NSTextField(wrappingLabelWithString: "원격 시청은 메뉴의 원격 시청 대기로 켜고 끕니다. 원격 녹화는 웹의 실시간 화면에서 시간을 골라 시작하며, 접속을 끊어도 그 시간까지 10분 단위 파일로 계속 저장합니다. 1,200kbps에서 시간당 약 0.5GB이고 최대 녹화 용량을 넘으면 보호하지 않은 오래된 파일부터 지웁니다. 소리는 다음 카메라 시작부터 적용됩니다. 슬림 모드는 scripts/enable-slim-mode.sh로 깨우기 예약 권한을 넣은 뒤 켭니다. 켜면 시청자·녹화가 없고 깨어난 뒤 입력이 없거나 입력이 5분 없을 때 Mac이 잠들고, 확인 간격마다 약 1분 30초 깨어나 텔레그램 요청을 확인합니다. 매일 예약 휴식의 시스템 잠자기는 1분 전 녹화를 정리하고 예약 깨우기 후 화면을 끕니다(잠깐 켜질 수 있음). 화면만 끄기는 시스템을 유지하되 휴식 중 카메라는 끕니다. 앱을 실행·인증한 채 두세요. 키보드·마우스 사용은 우선하며, 로그아웃·재부팅 후에는 재인증이 필요합니다.")
         note.textColor = .secondaryLabelColor
 
         let saveButton = NSButton(title: "저장", target: self, action: #selector(save))
@@ -146,14 +128,9 @@ final class SettingsWindowController: NSWindowController {
         audioCheckbox.state = configuration.audioEnabled ? .on : .off
         launchAtLoginCheckbox.state = LaunchAtLoginManager.isEnabled ? .on : .off
         bitrateField.integerValue = configuration.videoBitrateKbps
-        thresholdField.doubleValue = configuration.motionPixelThreshold
-        fractionField.doubleValue = configuration.motionChangedFraction
         retentionDaysField.integerValue = configuration.retentionDays
         maximumStorageField.doubleValue = configuration.retentionMaxGigabytes
         minimumFreeField.doubleValue = configuration.minimumFreeGigabytes
-        motionRegions = configuration.motionRegions
-        selectSeconds(configuration.preRollSeconds, in: preRollPopup)
-        selectSeconds(configuration.postRollSeconds, in: postRollPopup)
         scheduleCheckbox.state = configuration.sleepSchedule.enabled ? .on : .off
         restModePopup.select(restModePopup.itemArray.first {
             ($0.representedObject as? String) == configuration.sleepSchedule.mode.rawValue
@@ -169,12 +146,7 @@ final class SettingsWindowController: NSWindowController {
         wakeIntervalPopup.selectItem(withTag: wakeMinutes)
         statusLabel.stringValue = FileManager.default.fileExists(atPath: AppDirectories.gatewayConfiguration.path)
             ? "HTTPS 게이트웨이 설정 파일이 있습니다."
-            : "HTTPS 게이트웨이가 아직 설정되지 않아 원격 시청을 쓸 수 없습니다. docs/SETUP_MAC.md를 참고하세요. 로컬 녹화는 사용할 수 있습니다."
-        do {
-            try configuration.motionRegions.validate()
-        } catch {
-            statusLabel.stringValue += " 기존 감지 영역을 수정하거나 전체 화면으로 초기화한 뒤 저장하세요. " + error.localizedDescription
-        }
+            : "HTTPS 게이트웨이가 아직 설정되지 않아 원격 시청과 원격 녹화를 쓸 수 없습니다. docs/SETUP_MAC.md를 참고하세요."
     }
 
     @objc private func save() {
@@ -187,17 +159,12 @@ final class SettingsWindowController: NSWindowController {
                 .flatMap { $0.isEmpty ? nil : $0 },
             externalWebRTCHosts: hosts,
             videoBitrateKbps: bitrateField.integerValue,
-            motionPixelThreshold: thresholdField.doubleValue,
-            motionChangedFraction: fractionField.doubleValue,
             retentionDays: retentionDaysField.integerValue,
             retentionMaxGigabytes: maximumStorageField.doubleValue,
             minimumFreeGigabytes: minimumFreeField.doubleValue,
-            preRollSeconds: preRollPopup.selectedTag(),
-            postRollSeconds: postRollPopup.selectedTag(),
             sleepSchedule: DailySleepSchedule(enabled: scheduleCheckbox.state == .on,
                 sleepMinute: minute(in: sleepPicker), wakeMinute: minute(in: wakePicker),
                 mode: ScheduledRestMode(rawValue: restModePopup.selectedItem?.representedObject as? String ?? "") ?? .systemSleep),
-            motionRegions: motionRegions,
             slimMode: SlimModeSettings(enabled: slimModeCheckbox.state == .on, wakeIntervalMinutes: wakeIntervalPopup.selectedTag()),
             audioEnabled: audioCheckbox.state == .on
         )
@@ -207,7 +174,11 @@ final class SettingsWindowController: NSWindowController {
             let previous = try AppConfiguration.loadOrCreateForEditing()
             // The menu owns this choice, and this window may have been open since before it changed.
             configuration.liveStandby = previous.liveStandby
-            guard try PowerScheduleSettings.apply(configuration.sleepSchedule, replacing: previous.sleepSchedule) else { return }
+            guard try PowerScheduleSettings.apply(configuration.sleepSchedule, replacing: previous.sleepSchedule) else {
+                statusLabel.stringValue = "취소했습니다. 설정은 저장되지 않았습니다."
+                load()
+                return
+            }
             appliedSystemSchedule = configuration.sleepSchedule.requiresSystemUpdate(replacing: previous.sleepSchedule)
             try configuration.save()
             NotificationCenter.default.post(name: .monitoringSettingsChanged, object: nil)
@@ -216,14 +187,6 @@ final class SettingsWindowController: NSWindowController {
         } catch {
             statusLabel.stringValue = (appliedSystemSchedule ? "시스템 전원 예약은 적용되었습니다. 앱 설정 저장 상태를 확인하세요. " : "") + error.localizedDescription
         }
-    }
-
-    private func selectSeconds(_ seconds: Int, in popup: NSPopUpButton) {
-        if popup.itemArray.allSatisfy({ $0.tag != seconds }) {
-            popup.addItem(withTitle: "\(seconds)초")
-            popup.lastItem?.tag = seconds
-        }
-        popup.selectItem(withTag: seconds)
     }
 
     private func setMinute(_ minute: Int, in picker: NSDatePicker) {
@@ -236,18 +199,6 @@ final class SettingsWindowController: NSWindowController {
     }
 
     @objc private func changePassword() { AppPasswordPrompt.change() }
-
-    @objc private func editRegions() {
-        guard let window, regionEditor == nil else { return }
-        let editor = MotionRegionEditor(regions: motionRegions, preview: previewLayerProvider?()) { [weak self, weak window] value in
-            guard let self, let window else { return }
-            if let value { self.motionRegions = value }
-            if let sheet = self.regionEditor?.window { window.endSheet(sheet); sheet.orderOut(nil) }
-            self.regionEditor = nil
-        }
-        regionEditor = editor
-        if let sheet = editor.window { window.beginSheet(sheet) }
-    }
 
     @objc private func openConfigurationFolder() {
         try? AppDirectories.prepare()

@@ -35,27 +35,23 @@ public struct CaptureRuntimeInfo: Equatable {
     }
 }
 
-/// What the camera is running for. Remote viewing needs only the live stream; motion recording
-/// adds detection and the spool on top of the same capture; timed recording, started from the
-/// web for a number of hours, keeps every clip until its end time and skips detection.
+/// What the camera is running for. Remote viewing needs only the live stream; timed recording,
+/// started from the web for a number of hours, also writes every clip until its end time.
 public enum CaptureMode: String, Equatable {
     case off
     case live
-    case recording
     case timed
 
-    /// Both recording modes write files and therefore need the spool and the retention pass.
-    public var writesRecordings: Bool { self == .recording || self == .timed }
+    /// Recording writes files and therefore needs the spool and the retention pass.
+    public var writesRecordings: Bool { self == .timed }
 }
 
 public enum CaptureModePolicy {
-    /// Recording wins while wanted because its stream also serves viewers, so one capture covers
-    /// both. A timed recording wins over manual motion recording because its clips are
-    /// continuous; like remote viewing it needs standby on, the owner's switch for "remote may
-    /// use the camera". A scheduled rest pauses recording but not a viewer who explicitly asked
-    /// for video.
+    /// A timed recording wins while active because its stream also serves viewers, so one
+    /// capture covers both. Like remote viewing it needs standby on, the owner's switch for
+    /// "remote may use the camera". A scheduled rest pauses recording but not a viewer who
+    /// explicitly asked for video.
     public static func desiredMode(
-        recordingWanted: Bool,
         timedRecording: Bool = false,
         resting: Bool,
         systemSleeping: Bool,
@@ -63,18 +59,15 @@ public enum CaptureModePolicy {
         liveDemanded: Bool
     ) -> CaptureMode {
         if systemSleeping { return .off }
-        if !resting {
-            if timedRecording && liveStandby { return .timed }
-            if recordingWanted { return .recording }
-        }
+        if !resting, timedRecording, liveStandby { return .timed }
         if liveStandby && liveDemanded { return .live }
         return .off
     }
 
     /// Nobody is at the Mac to press retry for a remote viewer, and an exhausted recovery budget
-    /// must not leave the camera unreachable until someone returns. This applies to recording as
-    /// well: recording wins the mode, so a failed recording would otherwise block the viewer for
-    /// good. Without a waiting viewer a failed capture keeps waiting for a manual restart.
+    /// must not leave the camera unreachable until someone returns. This applies to a timed
+    /// recording as well: it wins the mode, so its failure would otherwise block the viewer for
+    /// good. Without a waiting viewer a failed capture keeps waiting for the next request.
     public static func shouldRetryFailedCapture(
         state: MonitoringState,
         viewerWaiting: Bool,
@@ -108,7 +101,7 @@ extension MonitoringState {
         case .starting:
             return "카메라 시작 중"
         case let .running(info):
-            return "움직임 녹화 중 — \(info.deviceName)"
+            return "카메라 켜짐 — \(info.deviceName)"
         case let .recovering(attempt, maximum, delaySeconds):
             return "자동 복구 \(attempt)/\(maximum) — \(delaySeconds)초 후 재시작"
         case .stopping:
