@@ -161,19 +161,42 @@ sha256sum "$3"
 SH
     chmod +x "$FIXTURE/bin/shasum"
 fi
+# github.com and the REST API fail independently, as on 2026-11-08 when every release
+# download answered 504 while the API served the same assets.
 cat > "$FIXTURE/bin/curl" <<'SH'
 #!/bin/bash
 set -eu
-source=""
+url=""
 destination=""
+binary=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --output) destination="$2"; shift 2 ;;
-        https://*/checksums.sha256) source="$TEST_RELEASE_CHECKSUMS"; shift ;;
-        https://*/mediamtx_*.tar.gz) source="$TEST_RELEASE_ARCHIVE"; shift ;;
+        -H) [[ "$2" != "Accept: application/octet-stream" ]] || binary=1; shift 2 ;;
+        https://*) url="$1"; shift ;;
         *) shift ;;
     esac
 done
+source=""
+case "$url" in
+    https://github.com/*)
+        [[ "${TEST_GITHUB_DOWNLOAD_DOWN:-0}" != 1 ]] || exit 22
+        case "$url" in
+            */checksums.sha256) source="$TEST_RELEASE_CHECKSUMS" ;;
+            */mediamtx_*.tar.gz) source="$TEST_RELEASE_ARCHIVE" ;;
+        esac ;;
+    https://api.github.com/repos/bluenviron/mediamtx/releases/assets/*)
+        [[ "${TEST_GITHUB_API_DOWN:-0}" != 1 ]] || exit 22
+        # Without the octet-stream Accept header the API answers with JSON metadata.
+        if [[ "$binary" != 1 ]]; then
+            printf '{"name":"metadata"}\n' > "$destination"
+            exit 0
+        fi
+        case "$url" in
+            */577109429) source="$TEST_RELEASE_CHECKSUMS" ;;
+            */577109449) source="$TEST_RELEASE_ARCHIVE" ;;
+        esac ;;
+esac
 [[ -n "$source" && -n "$destination" ]] || exit 1
 cp "$source" "$destination"
 SH
@@ -193,6 +216,21 @@ if bash "$FIXTURE/scripts/fetch-mediamtx.sh" >/dev/null 2>&1; then
 fi
 [[ "$(cat "$FIXTURE/vendor/mediamtx/mediamtx")" == original ]]
 echo 'PASS: MediaMTX checksum mismatch preserves the previous binary'
+printf '%s *%s\n' "$release_hash" "${TEST_RELEASE_ARCHIVE##*/}" > "$TEST_RELEASE_CHECKSUMS"
+if ! TEST_GITHUB_DOWNLOAD_DOWN=1 bash "$FIXTURE/scripts/fetch-mediamtx.sh" >/dev/null 2>&1; then
+    echo 'FAIL: MediaMTX fetch did not fall back to the GitHub API when release downloads failed'
+    exit 1
+fi
+[[ "$("$FIXTURE/vendor/mediamtx/mediamtx" --version)" == v1.21.1 ]]
+[[ -f "$FIXTURE/vendor/mediamtx/LICENSE" ]]
+echo 'PASS: MediaMTX falls back to the GitHub API when release downloads fail'
+printf 'original\n' > "$FIXTURE/vendor/mediamtx/mediamtx"
+if TEST_GITHUB_DOWNLOAD_DOWN=1 TEST_GITHUB_API_DOWN=1 bash "$FIXTURE/scripts/fetch-mediamtx.sh" >/dev/null 2>&1; then
+    echo 'FAIL: MediaMTX fetch reported success with every download source down'
+    exit 1
+fi
+[[ "$(cat "$FIXTURE/vendor/mediamtx/mediamtx")" == original ]]
+echo 'PASS: MediaMTX fetch with every source down preserves the previous binary'
 
 # Uninstall runs against a fixture root and HOME so no real Mac state is read
 # or deleted. Every macOS-only tool is mocked and logs the argv it received.

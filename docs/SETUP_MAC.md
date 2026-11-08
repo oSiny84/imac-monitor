@@ -52,7 +52,7 @@ chmod +x scripts/*.sh
 open dist/MacMonitor.app
 ```
 
-`fetch-mediamtx.sh`는 GitHub의 MediaMTX 1.21.1 Intel archive와 공식 `checksums.sha256`를 HTTPS로 받아 일치할 때만 설치합니다.
+`fetch-mediamtx.sh`는 GitHub의 MediaMTX 1.21.1 Intel archive와 공식 `checksums.sha256`를 HTTPS로 받아 일치할 때만 설치합니다. GitHub 릴리스 다운로드 주소가 실패하면(2026-11-08에 504 응답) 같은 파일을 GitHub API 자산 주소로 다시 받습니다. 어느 주소로 받아도 체크섬이 맞아야 설치하며, 둘 다 실패하면 기존 `vendor/mediamtx`를 그대로 둡니다.
 
 `build-app.sh`는 Xcode·Swift·Go·FFmpeg·MediaMTX 버전과 Intel 아키텍처를 빌드 전에 검사합니다. 새 앱은 임시 경로에서 완전히 조립하고 plist, privacy manifest, 실행 파일 아키텍처와 코드 서명을 검증한 뒤에만 기존 앱을 교체합니다. 동시성 검사까지 포함하려면 `MACMONITOR_TSAN=1 ./scripts/build-app.sh`를 사용합니다.
 
