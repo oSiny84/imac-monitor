@@ -22,6 +22,7 @@ import (
 	"macmonitor.local/gateway/internal/auth"
 	"macmonitor.local/gateway/internal/chat"
 	"macmonitor.local/gateway/internal/config"
+	"macmonitor.local/gateway/internal/diag"
 	webserver "macmonitor.local/gateway/internal/server"
 )
 
@@ -82,6 +83,7 @@ func serve(arguments []string) {
 		bot := chat.New(telegram, cfg.PublicOrigin, cfg.LiveDemandFile, cfg.MonitoringStatusFile,
 			filepath.Join(filepath.Dir(cfg.LiveDemandFile), "telegram-state.json"))
 		bot.ViewerSeen = server.LastViewerDemand
+		bot.Diagnose = diag.New(diag.DefaultDir()).Report
 		return bot
 	}, log.Printf)
 

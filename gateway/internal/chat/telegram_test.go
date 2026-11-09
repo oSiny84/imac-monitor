@@ -556,3 +556,162 @@ func TestSuperviseFollowsTheConfigurationFile(t *testing.T) {
 	cancel()
 	<-done
 }
+
+func TestDiagnoseRepliesInPartsWithoutTheTokenEvenWhenQueuedDuringSleep(t *testing.T) {
+	h := newHarness(t)
+	h.writeStatus(t, func(*health.Snapshot) {})
+	var long strings.Builder
+	long.WriteString("[잠자기·깨어남]\nleaked " + testToken + "\n")
+	for i := 0; i < 120; i++ {
+		long.WriteString(strings.Repeat("가", 60) + "\n")
+	}
+	h.bot.Diagnose = func(context.Context) string { return long.String() }
+	queuedAt := h.clock.Now().Add(-40 * time.Minute) // sent while the Mac slept
+	h.queue(h.message(1, 42, "카메라 진단", queuedAt))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	texts := h.api.texts(42)
+	if len(texts) < 3 || !strings.Contains(texts[0], "진단을 모읍니다") {
+		t.Fatalf("expected an acknowledgement and a report in parts: %v", texts)
+	}
+	if !strings.HasPrefix(texts[1], "(1/") || !strings.Contains(texts[1], "상태: 카메라 켜짐") {
+		t.Fatalf("the first part must carry the app status: %q", texts[1])
+	}
+	for _, text := range texts {
+		if strings.Contains(text, testToken) {
+			t.Fatal("the token leaked into a diagnostics reply")
+		}
+		if n := len([]rune(text)); n > 4096 {
+			t.Fatalf("a part has %d characters, over Telegram's limit", n)
+		}
+	}
+	if !strings.Contains(strings.Join(texts, ""), "leaked <token>") {
+		t.Fatal("the token must be replaced, not dropped with its line")
+	}
+	if h.demandFileContent() != "" {
+		t.Fatal("diagnostics must not turn the camera on")
+	}
+}
+
+func TestDiagnoseWithoutACollectorSaysSo(t *testing.T) {
+	h := newHarness(t)
+	h.queue(h.message(1, 42, "진단", h.clock.Now()))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if texts := h.api.texts(42); len(texts) != 1 || !strings.Contains(texts[0], "진단 기능이 없습니다") {
+		t.Fatalf("unexpected replies: %v", texts)
+	}
+}
+
+func TestSplitMessageKeepsLinesWhole(t *testing.T) {
+	parts := splitMessage("aaaa\nbbbb\ncc\n"+strings.Repeat("x", 11), 10)
+	expected := []string{"aaaa\nbbbb", "cc", "xxxxxxxxxx", "x"}
+	if strings.Join(parts, "|") != strings.Join(expected, "|") {
+		t.Fatalf("parts: %q", parts)
+	}
+	if parts := splitMessage("", 10); len(parts) != 0 {
+		t.Fatalf("empty text must give no parts: %q", parts)
+	}
+}
+
+// demandFileContent is the lease file, or "" when the bot never wrote one.
+func (h *harness) demandFileContent() string {
+	data, _ := os.ReadFile(h.demandFile)
+	return string(data)
+}
+
+func TestADiagnosisCutOffBySleepIsSentAfterTheNextStart(t *testing.T) {
+	h := newHarness(t)
+	h.writeStatus(t, func(*health.Snapshot) {})
+	ctx, cancel := context.WithCancel(context.Background())
+	// The app stops the gateway before the Mac sleeps: the collection is cut off mid-way.
+	h.bot.Diagnose = func(context.Context) string { cancel(); return "[잠자기·깨어남]\n…" }
+	h.queue(h.message(1, 42, "진단", h.clock.Now()))
+	if err := h.bot.Poll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if texts := h.api.texts(42); len(texts) != 1 || !strings.Contains(texts[0], "다음에 깨어날 때") {
+		t.Fatalf("only the acknowledgement can have gone out: %v", texts)
+	}
+	saved, _ := os.ReadFile(h.stateFile)
+	if !strings.Contains(string(saved), "pendingDiagnose") {
+		t.Fatalf("the unfinished request must survive the restart: %s", saved)
+	}
+
+	h.clock.Advance(5 * time.Minute) // asleep, then the scheduled wake starts a new gateway
+	server := httptest.NewServer(h.api.handler(t))
+	t.Cleanup(server.Close)
+	restarted := h.newBot(t, server)
+	restarted.Diagnose = func(context.Context) string { return "[잠자기·깨어남]\nDarkWake" }
+	restarted.load()
+	restarted.resumeDiagnosis(context.Background())
+	texts := h.api.texts(42)
+	if len(texts) != 2 || !strings.Contains(texts[1], "그 사이 Mac이 잠들어 지금 보냅니다") || !strings.Contains(texts[1], "DarkWake") {
+		t.Fatalf("the report must follow after the restart: %v", texts)
+	}
+	saved, _ = os.ReadFile(h.stateFile)
+	if strings.Contains(string(saved), "pendingDiagnose") {
+		t.Fatalf("a sent report must clear the mark: %s", saved)
+	}
+	restarted.resumeDiagnosis(context.Background())
+	if len(h.api.texts(42)) != 2 {
+		t.Fatal("a sent report must not be sent again")
+	}
+}
+
+func TestAnOldUnfinishedDiagnosisIsDropped(t *testing.T) {
+	h := newHarness(t)
+	old := h.clock.Now().Add(-31 * time.Minute)
+	h.bot.Diagnose = func(context.Context) string { return "report" }
+	h.bot.load()
+	h.bot.setPendingDiagnose(&old)
+	h.bot.resumeDiagnosis(context.Background())
+	if texts := h.api.texts(42); len(texts) != 0 {
+		t.Fatalf("a request older than the staleness limit must not be answered: %v", texts)
+	}
+	saved, _ := os.ReadFile(h.stateFile)
+	if strings.Contains(string(saved), "pendingDiagnose") {
+		t.Fatalf("the old mark must be cleared: %s", saved)
+	}
+}
+
+func TestRepeatedDiagnoseRequestsCollectOnce(t *testing.T) {
+	h := newHarness(t)
+	h.writeStatus(t, func(*health.Snapshot) {})
+	collections := 0
+	h.bot.Diagnose = func(context.Context) string { collections++; return "report" }
+	var deferred []func()
+	h.bot.Background = func(work func()) { deferred = append(deferred, work) }
+	now := h.clock.Now()
+	h.queue(h.message(1, 42, "진단", now), h.message(2, 42, "진단", now), h.message(3, 42, "diag", now))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, work := range deferred {
+		work()
+	}
+	texts := h.api.texts(42)
+	if collections != 1 || len(deferred) != 1 {
+		t.Fatalf("three requests in one batch must collect once, got %d: %v", collections, texts)
+	}
+	if !strings.Contains(texts[1], "이미 모으는 중") || !strings.Contains(texts[2], "이미 모으는 중") {
+		t.Fatalf("the later requests must be told one is under way: %v", texts)
+	}
+	if !h.bot.diagnosing.CompareAndSwap(false, true) {
+		t.Fatal("the guard must be released after the report")
+	}
+}
+
+func TestClassifyKeepsDiagnoseApartFromOtherWords(t *testing.T) {
+	cases := map[string]command{
+		"진단": commandDiagnose, "카메라 진단": commandDiagnose, "diag": commandDiagnose,
+		"프로그램 꺼": commandStop, "프로그램 상태": commandStatus, "로그인": commandHelp, "카메라": commandStart,
+	}
+	for text, expected := range cases {
+		if got := classify(text); got != expected {
+			t.Errorf("classify(%q) = %d, want %d", text, got, expected)
+		}
+	}
+}

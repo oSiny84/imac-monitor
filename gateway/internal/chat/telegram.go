@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"macmonitor.local/gateway/internal/health"
@@ -24,7 +25,10 @@ const DefaultAPIBase = "https://api.telegram.org"
 // ErrConflict is Telegram's 409: another process is long-polling the same bot token.
 var ErrConflict = errors.New("another process is already polling this bot token")
 
-const helpText = "명령: 카메라 (켜고 링크 받기) · 그만 (요청 끝내기) · 상태 (앱 상태 보기)"
+const helpText = "명령: 카메라 (켜고 링크 받기) · 그만 (요청 끝내기) · 상태 (앱 상태 보기) · 진단 (잠자기·카메라 기록 보기)"
+
+// Telegram refuses messages over 4096 characters; leave room for the part marker.
+const maxMessageRunes = 3900
 
 // Bot turns messages from one Telegram chat into the viewer lease the web page renews. The app
 // only sees the lease change, so a chat request and a browser tab are the same thing to it.
@@ -36,26 +40,30 @@ type Bot struct {
 	StateFile  string
 
 	// Production defaults come from New; tests override them.
-	APIBase        string
-	Client         *http.Client
-	Now            func() time.Time
-	Sleep          func(context.Context, time.Duration)
-	Logf           func(string, ...any)
+	APIBase string
+	Client  *http.Client
+	Now     func() time.Time
+	Sleep   func(context.Context, time.Duration)
+	Logf    func(string, ...any)
 	// Reports when a web viewer last renewed the live lease; nil when the gateway has no server.
 	ViewerSeen func() time.Time
+	// Collects the sleep/wake and camera diagnostics; nil when the gateway has none.
+	Diagnose func(context.Context) string
 	// The window closes this long after the last web viewer renewal, or this long after it
 	// opened when no viewer ever came.
 	ViewerGone      time.Duration
 	NoViewerTimeout time.Duration
-	Background     func(func())
-	PollTimeout    time.Duration
-	RenewEvery     time.Duration
-	StartupTimeout time.Duration
-	StalenessLimit time.Duration
+	Background      func(func())
+	PollTimeout     time.Duration
+	RenewEvery      time.Duration
+	StartupTimeout  time.Duration
+	StalenessLimit  time.Duration
 
 	mu     sync.Mutex
 	loaded bool
 	state  state
+	// Set while one diagnostics report is being collected and sent.
+	diagnosing atomic.Bool
 }
 
 // state survives the gateway restarts that every sleep/wake cycle causes. Without the offset
@@ -64,6 +72,9 @@ type state struct {
 	Offset          int64      `json:"offset"`
 	WindowUntil     *time.Time `json:"windowUntil,omitempty"`
 	WindowStartedAt *time.Time `json:"windowStartedAt,omitempty"`
+	// A 진단 request whose report was not fully sent: the app stops the gateway before every
+	// sleep, so a report cut off by sleep is sent again after the next start.
+	PendingDiagnose *time.Time `json:"pendingDiagnose,omitempty"`
 }
 
 type command int
@@ -73,6 +84,7 @@ const (
 	commandStart
 	commandStop
 	commandStatus
+	commandDiagnose
 )
 
 type update struct {
@@ -104,17 +116,17 @@ func New(config Config, origin, demandFile, statusFile, stateFile string) *Bot {
 		StateFile:  stateFile,
 		APIBase:    DefaultAPIBase,
 		// Longer than the long-poll wait, so a healthy poll never times out on the client side.
-		Client:         &http.Client{Timeout: 40 * time.Second},
-		Now:            time.Now,
-		Sleep:          sleepContext,
-		Logf:           log.Printf,
-		ViewerGone:     90 * time.Second,
+		Client:          &http.Client{Timeout: 40 * time.Second},
+		Now:             time.Now,
+		Sleep:           sleepContext,
+		Logf:            log.Printf,
+		ViewerGone:      90 * time.Second,
 		NoViewerTimeout: 3 * time.Minute,
-		Background:     func(work func()) { go work() },
-		PollTimeout:    25 * time.Second,
-		RenewEvery:     5 * time.Second,
-		StartupTimeout: 60 * time.Second,
-		StalenessLimit: 30 * time.Minute,
+		Background:      func(work func()) { go work() },
+		PollTimeout:     25 * time.Second,
+		RenewEvery:      5 * time.Second,
+		StartupTimeout:  60 * time.Second,
+		StalenessLimit:  30 * time.Minute,
 	}
 }
 
@@ -123,6 +135,7 @@ func New(config Config, origin, demandFile, statusFile, stateFile string) *Bot {
 func (b *Bot) Run(ctx context.Context) {
 	b.load()
 	b.Logf("telegram: bot started for chat %d", b.Config.ChatID)
+	b.resumeDiagnosis(ctx)
 	go b.renewLoop(ctx)
 	backoff := time.Second
 	for ctx.Err() == nil {
@@ -186,6 +199,20 @@ func (b *Bot) handle(ctx context.Context, item update) {
 	switch classify(msg.Text) {
 	case commandStatus:
 		b.reply(ctx, b.statusText(now))
+	case commandDiagnose:
+		// Read-only, so a request queued while the Mac slept is still worth answering on wake.
+		if b.Diagnose == nil {
+			b.reply(ctx, "이 게이트웨이에는 진단 기능이 없습니다.")
+			return
+		}
+		// Several requests sent while the Mac slept arrive in one batch; collect once.
+		if !b.diagnosing.CompareAndSwap(false, true) {
+			b.reply(ctx, "진단을 이미 모으는 중입니다. 곧 답장이 갑니다.")
+			return
+		}
+		b.setPendingDiagnose(&now)
+		b.reply(ctx, "진단을 모읍니다 · 30초쯤 걸립니다. 그 전에 Mac이 잠들면 다음에 깨어날 때 보냅니다.")
+		b.Background(func() { b.sendDiagnosis(ctx, "") })
 	case commandStop:
 		b.setWindow(nil)
 		b.reply(ctx, "카메라 요청을 끝냈습니다. 웹에서 보고 있는 사람이 없으면 약 20초 뒤 카메라가 꺼집니다.")
@@ -206,7 +233,7 @@ func (b *Bot) handle(ctx context.Context, item update) {
 }
 
 // classify reads intent from a few words so the owner need not remember exact commands.
-// Status and stop are checked first: "카메라 상태" asks, "카메라 꺼" ends.
+// Diagnose, status and stop are checked first: "카메라 진단" and "카메라 상태" ask, "카메라 꺼" ends.
 func classify(text string) command {
 	lowered := strings.ToLower(strings.TrimSpace(text))
 	has := func(words ...string) bool {
@@ -218,6 +245,8 @@ func classify(text string) command {
 		return false
 	}
 	switch {
+	case has("진단", "diag"):
+		return commandDiagnose
 	case has("상태", "status"):
 		return commandStatus
 	case has("그만", "꺼", "중지", "stop", "off", "끝"):
@@ -304,11 +333,91 @@ func describe(status health.Status) string {
 	return label
 }
 
+// sendDiagnosis collects one report and sends it in parts. The pending mark is cleared only
+// when every part went out, so a report cut off by sleep or a network error is sent again.
+func (b *Bot) sendDiagnosis(ctx context.Context, note string) {
+	defer b.diagnosing.Store(false)
+	report := "진단 · " + b.Now().Format("01-02 15:04:05") + " 기준\n"
+	if note != "" {
+		report += note + "\n"
+	}
+	report += b.statusText(b.Now()) + "\n\n" + b.Diagnose(ctx)
+	parts := splitMessage(b.redact(report), maxMessageRunes)
+	for index, part := range parts {
+		if len(parts) > 1 {
+			part = fmt.Sprintf("(%d/%d) ", index+1, len(parts)) + part
+		}
+		if err := b.send(ctx, part); err != nil {
+			b.Logf("telegram: diagnostics reply failed, will resend after the next start: %v", err)
+			return
+		}
+	}
+	b.setPendingDiagnose(nil)
+}
+
+// resumeDiagnosis sends a report that the previous gateway accepted but did not finish.
+func (b *Bot) resumeDiagnosis(ctx context.Context) {
+	b.mu.Lock()
+	pending := b.state.PendingDiagnose
+	b.mu.Unlock()
+	if pending == nil || b.Diagnose == nil {
+		return
+	}
+	if b.Now().Sub(*pending) > b.StalenessLimit {
+		b.setPendingDiagnose(nil)
+		return
+	}
+	if !b.diagnosing.CompareAndSwap(false, true) {
+		return
+	}
+	note := pending.Format("15:04") + "에 받은 진단 요청입니다. 그 사이 Mac이 잠들어 지금 보냅니다."
+	b.Background(func() { b.sendDiagnosis(ctx, note) })
+}
+
+func (b *Bot) setPendingDiagnose(at *time.Time) {
+	b.mu.Lock()
+	b.state.PendingDiagnose = at
+	b.persistLocked()
+	b.mu.Unlock()
+}
+
+// splitMessage cuts text into parts of at most limit runes, at line ends where it can.
+func splitMessage(text string, limit int) []string {
+	var parts []string
+	var current []rune
+	for _, line := range strings.SplitAfter(text, "\n") {
+		runes := []rune(line)
+		for len(runes) > limit {
+			if len(current) > 0 {
+				parts = append(parts, strings.TrimRight(string(current), "\n"))
+				current = nil
+			}
+			parts = append(parts, string(runes[:limit]))
+			runes = runes[limit:]
+		}
+		if len(current)+len(runes) > limit {
+			if flushed := strings.TrimRight(string(current), "\n"); flushed != "" {
+				parts = append(parts, flushed)
+			}
+			current = nil
+		}
+		current = append(current, runes...)
+	}
+	if rest := strings.TrimRight(string(current), "\n"); rest != "" {
+		parts = append(parts, rest)
+	}
+	return parts
+}
+
 func (b *Bot) reply(ctx context.Context, text string) {
-	payload := map[string]any{"chat_id": b.Config.ChatID, "text": text, "disable_web_page_preview": true}
-	if err := b.call(ctx, "sendMessage", payload, nil); err != nil {
+	if err := b.send(ctx, text); err != nil {
 		b.Logf("telegram: reply failed: %v", err)
 	}
+}
+
+func (b *Bot) send(ctx context.Context, text string) error {
+	payload := map[string]any{"chat_id": b.Config.ChatID, "text": text, "disable_web_page_preview": true}
+	return b.call(ctx, "sendMessage", payload, nil)
 }
 
 func (b *Bot) call(ctx context.Context, method string, payload any, result any) error {
