@@ -3,8 +3,12 @@
 # gateway.json; the running gateway picks the file up within about ten seconds.
 set -euo pipefail
 
+# With --ask instead of a token the script asks for it without showing what is typed, so the
+# token reaches neither the screen, a log of this output, nor the shell history. Return alone
+# keeps the current configuration (or skips the setup when there is none).
 if [[ $# -lt 1 || $# -gt 2 ]]; then
     echo "usage: $0 <bot-token-from-@BotFather> [view-minutes]" >&2
+    echo "       $0 --ask [view-minutes]" >&2
     exit 2
 fi
 
@@ -12,14 +16,45 @@ TOKEN="$1"
 VIEW_MINUTES="${2:-10}"
 APP_SUPPORT="${MACMONITOR_APP_SUPPORT:-$HOME/Library/Application Support/MacMonitor}"
 API="${MACMONITOR_TELEGRAM_API:-https://api.telegram.org}"
+TOKEN_PATTERN='^[0-9]{5,}:[A-Za-z0-9_-]{30,}$'
 
 fail() {
     echo "error: $*" >&2
     exit 1
 }
 
+if [[ "$TOKEN" == --ask ]]; then
+    if [[ -f "$APP_SUPPORT/telegram.json" ]]; then
+        echo "텔레그램 봇이 이미 설정되어 있습니다."
+        PROMPT="새 토큰으로 바꾸려면 붙여 넣고 Return, 그대로 두려면 Return만 누르세요: "
+        SKIPPED="기존 텔레그램 설정을 그대로 둡니다."
+    else
+        echo "텔레그램 봇이 아직 설정되지 않았습니다. 텔레그램 @BotFather가 준 토큰(123456789:AAH... 형태)이 필요합니다."
+        PROMPT="토큰을 붙여 넣고 Return, 나중에 하려면 Return만 누르세요: "
+        SKIPPED="텔레그램 설정을 건너뜁니다. 나중에 Build MacMonitor.command를 다시 실행하면 다시 묻습니다."
+    fi
+    echo "붙여 넣은 토큰은 화면과 로그에 표시되지 않습니다."
+    ATTEMPT=1
+    while :; do
+        printf '%s' "$PROMPT"
+        TOKEN=""
+        # -s: nothing typed is echoed, so the token cannot end up in a log of this output.
+        IFS= read -r -s TOKEN || true
+        echo
+        TOKEN="$(printf '%s' "$TOKEN" | tr -d '[:space:]')"
+        if [[ -z "$TOKEN" ]]; then
+            echo "$SKIPPED"
+            exit 0
+        fi
+        [[ "$TOKEN" =~ $TOKEN_PATTERN ]] && break
+        [[ "$ATTEMPT" -lt 3 ]] || fail "토큰 형식이 아닙니다. @BotFather가 보낸 123456789:AAH... 한 줄을 그대로 복사하세요"
+        ATTEMPT=$((ATTEMPT + 1))
+        echo "토큰 형식이 아닙니다. @BotFather가 보낸 123456789:AAH... 한 줄을 그대로 복사해 다시 붙여 넣으세요."
+    done
+fi
+
 # The token is a secret: it never goes into echo, set -x or the gateway log.
-[[ "$TOKEN" =~ ^[0-9]{5,}:[A-Za-z0-9_-]{30,}$ ]] || \
+[[ "$TOKEN" =~ $TOKEN_PATTERN ]] || \
     fail "the token must look like 123456789:AAH... exactly as @BotFather printed it"
 [[ "$VIEW_MINUTES" =~ ^[0-9]+$ && "$VIEW_MINUTES" -ge 1 && "$VIEW_MINUTES" -le 120 ]] || \
     fail "view-minutes must be a whole number from 1 to 120"

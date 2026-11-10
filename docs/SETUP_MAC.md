@@ -39,7 +39,7 @@ sudo xattr -d com.apple.quarantine /usr/local/bin/ffmpeg 2>/dev/null || true
 
 ## 2. 의존성 및 앱 빌드
 
-Finder에서 저장소 루트의 `Build MacMonitor.command`를 더블클릭하면 아래 준비와 빌드 절차를 한 번에 실행합니다. MediaMTX 1.21.1이 없으면 체크섬 검증 후 내려받고, 스크립트 권한 설정, 일반 테스트와 Thread Sanitizer, 앱 패키징, 실행 전 진단을 거쳐 성공한 앱을 자동 실행합니다. 터미널 출력은 `dist/build-날짜-시간.log`에도 보존되며 실패 시 창을 닫지 않고 오류를 표시합니다.
+Finder에서 저장소 루트의 `Build MacMonitor.command`를 더블클릭하면 아래 준비와 빌드 절차를 한 번에 실행합니다. MediaMTX 1.21.1이 없으면 체크섬 검증 후 내려받고, 스크립트 권한 설정, 일반 테스트와 Thread Sanitizer, 앱 패키징, 실행 전 진단을 거친 뒤, 앱을 열기 전에 같은 창에서 텔레그램 봇(7절)과 슬림 모드 깨우기 권한(9절)을 설정하고 성공한 앱을 자동 실행합니다. 봇 토큰은 Return만 누르면 건너뛰고, 슬림 모드 권한은 비밀번호 대신 Control-C를 누르면 건너뜁니다. 두 설정은 실패해도 빌드는 성공으로 끝납니다. 새 ZIP으로 다시 설치할 때는 `Uninstall MacMonitor.command`를 먼저 실행하지 않습니다. 실행하면 봇·웹·비밀번호 설정이 지워집니다. 터미널 출력은 `dist/build-날짜-시간.log`에도 보존되며 실패 시 창을 닫지 않고 오류를 표시합니다.
 
 개별 명령으로 실행하려면 다음 순서를 사용합니다.
 
@@ -186,11 +186,13 @@ Wi-Fi를 끈 휴대폰 데이터망에서 다음 순서로 확인합니다.
 ## 7. 텔레그램으로 카메라 켜기
 
 1. 텔레그램에서 `@BotFather`에게 `/newbot`을 보내 봇을 만들고 토큰(`123456789:AAH...` 형태)을 복사합니다.
-2. Mac 터미널에서 실행합니다. 토큰은 명령줄에만 쓰이고 저장 파일 외에는 남지 않습니다.
+2. `Build MacMonitor.command`가 빌드 끝에 토큰을 묻습니다. 설정이 없으면 토큰을 붙여 넣고 Return을 누릅니다. 이미 있으면 Return만 눌러 그대로 두거나 새 토큰을 붙여 넣어 바꿉니다. 붙여 넣은 토큰은 화면과 빌드 로그에 표시되지 않으며, 형식이 틀리면 두 번 더 묻습니다. 빌드 없이 따로 하려면 Mac 터미널에서 실행합니다.
 
 ```bash
-~/Downloads/MacMonitor/scripts/configure-telegram.sh "<봇 토큰>"
+~/Downloads/MacMonitor/scripts/configure-telegram.sh --ask
 ```
+
+   토큰을 인자로 주는 `configure-telegram.sh "<봇 토큰>"`도 그대로 됩니다. 이때 토큰은 셸 기록에 남습니다. 같은 봇을 쓰는 MacMonitor가 실행 중이면 앱이 봇의 메시지를 먼저 받아 채팅 찾기가 실패할 수 있으니, 같은 토큰을 다시 넣을 때는 앱을 종료한 뒤 실행합니다.
 
 3. 안내가 나오면 **휴대폰 텔레그램 앱에서** 새 봇과의 채팅을 열어 아무 말이나 보낸 뒤, Mac 터미널에서는 Return 키만 누릅니다. 터미널에 글을 입력하면 봇은 아무 메시지도 받지 못해 `봇에 도착한 메시지가 없습니다`로 끝납니다. 스크립트가 그 채팅 번호를 찾아 `~/Library/Application Support/MacMonitor/telegram.json`(0600)에 저장하고 채팅에 연결 확인 메시지를 보냅니다.
 4. 게이트웨이가 실행 중이면 약 10초 안에 봇이 시작됩니다. 앱이나 웹 서버를 다시 시작할 필요는 없습니다.
@@ -205,7 +207,7 @@ Wi-Fi를 끈 휴대폰 데이터망에서 다음 순서로 확인합니다.
 
 슬림 모드를 켜면 시청자도 녹화 창도 없을 때 Mac이 잠들고, 설정한 간격(기본 10분)마다 깨어나 약 1분 30초 동안 텔레그램 요청과 웹 접속을 기다립니다. 깨어난 뒤 키보드·마우스를 건드리지 않으면 그대로 다시 잠들고, 건드리면 마지막 입력 뒤 5분이 지나야 잠듭니다. 요청이 있으면 깬 상태로 영상을 보내고, 시청이 끝난 뒤 1분이 지나면 다시 잠듭니다. 원격 녹화 중에는 끝날 때까지 잠들지 않습니다.
 
-깨우기 예약(`pmset schedule wake`)은 관리자 권한이 필요하므로 한 번만 다음을 실행합니다. 현재 사용자가 비밀번호 없이 `pmset schedule wake`와 `pmset schedule cancel wake`만 실행할 수 있게 하는 규칙 한 줄을 `/etc/sudoers.d/macmonitor`에 넣습니다. 파일은 `visudo -cf`로 검사한 뒤에만 설치됩니다.
+깨우기 예약(`pmset schedule wake`)은 관리자 권한이 필요합니다. `Build MacMonitor.command`가 빌드 끝에 Mac 로그인 비밀번호를 한 번 묻고 아래 규칙을 설치하며, 이미 설치돼 있으면 묻지 않습니다. 그때 건너뛰었거나 따로 하려면 다음을 실행합니다. 현재 사용자가 비밀번호 없이 `pmset schedule wake`와 `pmset schedule cancel wake`만 실행할 수 있게 하는 규칙 한 줄을 `/etc/sudoers.d/macmonitor`에 넣습니다. 파일은 `visudo -cf`로 검사한 뒤에만 설치됩니다.
 
 ```bash
 ~/Downloads/MacMonitor/scripts/enable-slim-mode.sh

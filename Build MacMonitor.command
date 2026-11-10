@@ -29,7 +29,9 @@ finish() {
 }
 trap finish EXIT
 
-exec > >(/usr/bin/tee "$LOG_FILE") 2>&1
+# -i: Control-C during the owner setup below must not end the log writer, or the next line
+# this script prints would kill it with a broken pipe.
+exec > >(/usr/bin/tee -i "$LOG_FILE") 2>&1
 set -e
 
 printf 'MacMonitor 원클릭 빌드를 시작합니다.\n'
@@ -58,6 +60,16 @@ MACMONITOR_TSAN=1 "$ROOT_DIR/scripts/build-app.sh"
 
 printf '\n실행 전 진단을 시작합니다.\n'
 "$ROOT_DIR/scripts/diagnose.sh"
+
+# Owner setup (Telegram bot, slim mode rule) only when someone is at the keyboard. It runs
+# before the app starts so the gateway finds telegram.json at launch. Neither step can fail
+# the build; Control-C ends the step in progress, not this script.
+if [[ -t 0 ]]; then
+    printf '\n빌드가 끝났습니다. 앱을 열기 전에 설정 두 가지를 확인합니다.\n\n'
+    trap 'printf "\n"' INT
+    "$ROOT_DIR/scripts/install-setup.sh" || true
+    trap - INT
+fi
 
 printf '\n빌드된 앱을 실행합니다.\n'
 /usr/bin/open "$ROOT_DIR/dist/MacMonitor.app"

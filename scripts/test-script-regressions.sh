@@ -614,6 +614,200 @@ INSTALL_LINE="$(grep -n '^sudo install' "$SLIM_LOG" | head -n 1 | cut -d: -f1)"
 echo 'PASS: enable-slim-mode checks the rule with visudo and then installs exactly it'
 rm -f "$FIXTURE/sudoers.d/macmonitor"
 
+# --ask reads the token without an argument, so the install can ask for it. The answers come
+# from stdin here (printf format, so '' is end of input).
+ask_telegram() {
+    local answers="$1"
+    printf -- "$answers" | env MACMONITOR_APP_SUPPORT="$TELEGRAM_DATA" \
+        bash "$FIXTURE/scripts/configure-telegram.sh" --ask
+}
+TELEGRAM_TOKEN_2='67890:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'
+rm -rf "$TELEGRAM_DATA"
+: > "$TELEGRAM_LOG"
+for answers in '\n' ''; do
+    ask_telegram "$answers" > "$FIXTURE/ask-out.txt" 2>&1 || {
+        echo 'FAIL: --ask must skip, not fail, when no token is given'
+        cat "$FIXTURE/ask-out.txt"
+        exit 1
+    }
+    grep -q '건너뜁니다' "$FIXTURE/ask-out.txt" && [[ ! -e "$TELEGRAM_DATA/telegram.json" && ! -s "$TELEGRAM_LOG" ]] || {
+        echo 'FAIL: --ask without a token must say it skips, write nothing and contact nobody'
+        cat "$FIXTURE/ask-out.txt"
+        exit 1
+    }
+done
+echo 'PASS: telegram --ask skips on Return or end of input when nothing is configured'
+
+# A pasted token often carries a trailing space or a Windows line ending.
+ask_telegram " $TELEGRAM_TOKEN \r\n" > "$FIXTURE/ask-out.txt" 2>&1 || {
+    echo 'FAIL: --ask failed with a valid token'
+    cat "$FIXTURE/ask-out.txt"
+    exit 1
+}
+grep -q "\"botToken\": \"$TELEGRAM_TOKEN\"" "$TELEGRAM_DATA/telegram.json" && grep -q '"chatID": 42' "$TELEGRAM_DATA/telegram.json" || {
+    echo 'FAIL: --ask did not save the token it was given'
+    exit 1
+}
+if grep -q "$TELEGRAM_TOKEN" "$FIXTURE/ask-out.txt"; then
+    echo 'FAIL: --ask printed the token, which would put it in the build log'
+    exit 1
+fi
+echo 'PASS: telegram --ask saves a pasted token without printing it'
+
+cp "$TELEGRAM_DATA/telegram.json" "$FIXTURE/telegram-before.json"
+: > "$TELEGRAM_LOG"
+ask_telegram '\n' > "$FIXTURE/ask-out.txt" 2>&1 && grep -q '그대로 둡니다' "$FIXTURE/ask-out.txt" &&
+    cmp -s "$TELEGRAM_DATA/telegram.json" "$FIXTURE/telegram-before.json" && [[ ! -s "$TELEGRAM_LOG" ]] || {
+    echo 'FAIL: --ask must keep an existing configuration on Return'
+    cat "$FIXTURE/ask-out.txt"
+    exit 1
+}
+# Three malformed answers end the question; the old configuration stays.
+if ask_telegram 'abc\nnot-a-token\n12345:short\n' > "$FIXTURE/ask-out.txt" 2>&1; then
+    echo 'FAIL: --ask accepted a malformed token'
+    exit 1
+fi
+cmp -s "$TELEGRAM_DATA/telegram.json" "$FIXTURE/telegram-before.json" && [[ ! -s "$TELEGRAM_LOG" ]] || {
+    echo 'FAIL: malformed tokens must not change the configuration or reach Telegram'
+    exit 1
+}
+if grep -q 'not-a-token\|12345:short' "$FIXTURE/ask-out.txt"; then
+    echo 'FAIL: --ask echoed what was typed'
+    exit 1
+fi
+# A second try after a malformed first one replaces the configuration.
+ask_telegram "oops\n$TELEGRAM_TOKEN_2\n" > "$FIXTURE/ask-out.txt" 2>&1 &&
+    grep -q "\"botToken\": \"$TELEGRAM_TOKEN_2\"" "$TELEGRAM_DATA/telegram.json" &&
+    ! grep -q "$TELEGRAM_TOKEN" "$TELEGRAM_DATA/telegram.json" || {
+    echo 'FAIL: --ask did not replace the configuration with the new token'
+    cat "$FIXTURE/ask-out.txt"
+    exit 1
+}
+if grep -q "$TELEGRAM_TOKEN_2" "$FIXTURE/ask-out.txt"; then
+    echo 'FAIL: --ask printed the replacement token'
+    exit 1
+fi
+echo 'PASS: telegram --ask keeps the configuration on Return and replaces it with a new token'
+
+# The install runs both owner setups. Neither may fail it: a skipped bot, a bot that got no
+# message and a rejected sudoers rule all leave the exit status at 0.
+cp "$ROOT_DIR/scripts/install-setup.sh" "$FIXTURE/scripts/"
+run_install_setup() {
+    local answers="$1"
+    printf -- "$answers" | env MACMONITOR_APP_SUPPORT="$TELEGRAM_DATA" MACMONITOR_SUDOERS_DIR="$FIXTURE/sudoers.d" \
+        MACMONITOR_USER=june bash "$FIXTURE/scripts/install-setup.sh"
+}
+rm -rf "$TELEGRAM_DATA"
+rm -f "$FIXTURE/sudoers.d/macmonitor"
+: > "$SLIM_LOG"
+run_install_setup "$TELEGRAM_TOKEN\n" > "$FIXTURE/setup-out.txt" 2>&1 || {
+    echo 'FAIL: install setup failed on a first install'
+    cat "$FIXTURE/setup-out.txt"
+    exit 1
+}
+grep -q "\"botToken\": \"$TELEGRAM_TOKEN\"" "$TELEGRAM_DATA/telegram.json" &&
+    grep -q '^june ALL=(root) NOPASSWD: /usr/bin/pmset schedule wake' "$FIXTURE/sudoers.d/macmonitor" || {
+    echo 'FAIL: a first install must save the bot and install the slim mode rule'
+    cat "$FIXTURE/setup-out.txt"
+    exit 1
+}
+if grep -q "$TELEGRAM_TOKEN" "$FIXTURE/setup-out.txt"; then
+    echo 'FAIL: install setup printed the token'
+    exit 1
+fi
+echo 'PASS: install setup configures the bot and the slim mode rule on a first install'
+
+cp "$TELEGRAM_DATA/telegram.json" "$FIXTURE/telegram-before.json"
+: > "$SLIM_LOG"
+: > "$TELEGRAM_LOG"
+run_install_setup '\n' > "$FIXTURE/setup-out.txt" 2>&1 &&
+    cmp -s "$TELEGRAM_DATA/telegram.json" "$FIXTURE/telegram-before.json" && [[ ! -s "$TELEGRAM_LOG" ]] &&
+    grep -q '이미 설치되어 있습니다' "$FIXTURE/setup-out.txt" || {
+    echo 'FAIL: a repeated install must keep the bot on Return and skip the installed rule'
+    cat "$FIXTURE/setup-out.txt"
+    exit 1
+}
+if grep -q '^sudo -v\|^sudo install\|^install ' "$SLIM_LOG"; then
+    echo 'FAIL: a repeated install asked for the password or reinstalled the rule'
+    cat "$SLIM_LOG"
+    exit 1
+fi
+echo 'PASS: install setup changes nothing on a repeated install'
+
+# A rule file that sudo does not accept (written for another account) is installed again.
+: > "$SLIM_LOG"
+TEST_SUDO_RULE_STATUS=1 run_install_setup '\n' > "$FIXTURE/setup-out.txt" 2>&1 || {
+    echo 'FAIL: install setup must exit 0 when the rule is not accepted afterwards'
+    cat "$FIXTURE/setup-out.txt"
+    exit 1
+}
+grep -q '^sudo install' "$SLIM_LOG" && grep -q '설치하지 못했습니다' "$FIXTURE/setup-out.txt" || {
+    echo 'FAIL: install setup must retry a rule sudo rejects and report that it still fails'
+    cat "$FIXTURE/setup-out.txt"
+    exit 1
+}
+
+rm -rf "$TELEGRAM_DATA"
+rm -f "$FIXTURE/sudoers.d/macmonitor"
+: > "$SLIM_LOG"
+TEST_TELEGRAM_UPDATES=none TEST_VISUDO=fail run_install_setup "$TELEGRAM_TOKEN\n" > "$FIXTURE/setup-out.txt" 2>&1 || {
+    echo 'FAIL: install setup must exit 0 when both steps fail'
+    cat "$FIXTURE/setup-out.txt"
+    exit 1
+}
+[[ ! -e "$TELEGRAM_DATA/telegram.json" && ! -e "$FIXTURE/sudoers.d/macmonitor" ]] &&
+    grep -q '텔레그램 설정을 마치지 못했습니다' "$FIXTURE/setup-out.txt" &&
+    grep -q '^sudo visudo' "$SLIM_LOG" && grep -q '슬림 모드 권한을 설치하지 못했습니다' "$FIXTURE/setup-out.txt" || {
+    echo 'FAIL: a failed bot setup must be reported and must not stop the slim mode step'
+    cat "$FIXTURE/setup-out.txt"
+    exit 1
+}
+echo 'PASS: install setup reports a failed step and still finishes'
+
+# Control-C reaches every process of the terminal. The step in progress dies of it; the setup
+# itself must go on to the next step. The stand-in step interrupts its caller the same way.
+INTERRUPT="$FIXTURE/interrupt"
+mkdir -p "$INTERRUPT"
+cp "$ROOT_DIR/scripts/install-setup.sh" "$INTERRUPT/"
+cat > "$INTERRUPT/configure-telegram.sh" <<'SH'
+#!/bin/bash
+kill -INT "$PPID"
+kill -INT "$$"
+sleep 5
+SH
+cat > "$INTERRUPT/enable-slim-mode.sh" <<'SH'
+#!/bin/bash
+echo 'slim step ran'
+SH
+rm -f "$FIXTURE/sudoers.d/macmonitor"
+env MACMONITOR_SUDOERS_DIR="$FIXTURE/sudoers.d" bash "$INTERRUPT/install-setup.sh" </dev/null > "$FIXTURE/setup-out.txt" 2>&1 &&
+    grep -q '텔레그램 설정을 마치지 못했습니다' "$FIXTURE/setup-out.txt" && grep -q 'slim step ran' "$FIXTURE/setup-out.txt" || {
+    echo 'FAIL: Control-C during the bot step must be reported and must not end the whole setup'
+    cat "$FIXTURE/setup-out.txt"
+    exit 1
+}
+echo 'PASS: install setup survives Control-C in a step and runs the next one'
+
+# Hiding what is typed needs a terminal, which these checks do not have, so the option itself
+# is checked: without -s the pasted token would show in the window.
+grep -q '^        IFS= read -r -s TOKEN' "$ROOT_DIR/scripts/configure-telegram.sh" || {
+    echo 'FAIL: --ask must read the token with read -s'
+    exit 1
+}
+
+# The double-click build asks only at a terminal, before the app starts, and cannot fail on it.
+BUILD_COMMAND="$ROOT_DIR/Build MacMonitor.command"
+SETUP_LINE="$(grep -n 'scripts/install-setup.sh" || true' "$BUILD_COMMAND" | head -n 1 | cut -d: -f1)"
+OPEN_LINE="$(grep -n '^/usr/bin/open ' "$BUILD_COMMAND" | head -n 1 | cut -d: -f1)"
+DIAGNOSE_LINE="$(grep -n 'scripts/diagnose.sh"$' "$BUILD_COMMAND" | head -n 1 | cut -d: -f1)"
+[[ -n "$SETUP_LINE" && -n "$OPEN_LINE" && -n "$DIAGNOSE_LINE" && "$DIAGNOSE_LINE" -lt "$SETUP_LINE" && "$SETUP_LINE" -lt "$OPEN_LINE" ]] &&
+    sed -n "$((SETUP_LINE - 3)),${SETUP_LINE}p" "$BUILD_COMMAND" | grep -q '^if \[\[ -t 0 \]\]; then$' || {
+    echo 'FAIL: the build must run install-setup.sh after the diagnosis, before opening the app, only at a terminal'
+    exit 1
+}
+echo 'PASS: the one-click build runs the owner setup at a terminal between diagnosis and launch'
+unset TEST_VISUDO
+
 # Same-Wi-Fi HTTPS setup. Every macOS tool it uses is mocked, and configure-gateway.sh is a
 # stub that records its arguments and writes the gateway.json keys the setup reads back.
 LAN="$FIXTURE/lan"
