@@ -605,6 +605,67 @@ func TestDiagnoseWithoutACollectorSaysSo(t *testing.T) {
 	}
 }
 
+func TestSleepClosesTheWindowRepliesAndSleepsOnce(t *testing.T) {
+	h := newHarness(t)
+	calls := 0
+	h.bot.SleepMac = func(context.Context) error { calls++; return nil }
+	h.queue(h.message(1, 42, "카메라", h.clock.Now()))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	before := len(h.api.texts(42))
+	h.queue(h.message(2, 42, "잠자기", h.clock.Now()))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("sleep calls: %d", calls)
+	}
+	texts := h.api.texts(42)[before:]
+	if len(texts) != 1 || !strings.Contains(texts[0], "Mac을 재웁니다") {
+		t.Fatalf("unexpected replies: %v", texts)
+	}
+	h.bot.mu.Lock()
+	window := h.bot.state.WindowUntil
+	h.bot.mu.Unlock()
+	if window != nil {
+		t.Fatal("an open view window would keep the camera on and the Mac awake")
+	}
+}
+
+func TestSleepSentWhileTheMacSleptIsDropped(t *testing.T) {
+	h := newHarness(t)
+	calls := 0
+	h.bot.SleepMac = func(context.Context) error { calls++; return nil }
+	h.queue(h.message(1, 42, "잠자기", h.clock.Now().Add(-3*time.Minute)))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Fatal("a wake must not be ended by a sleep request from before it")
+	}
+	if texts := h.api.texts(42); len(texts) != 1 || !strings.Contains(texts[0], "무시했습니다") {
+		t.Fatalf("unexpected replies: %v", texts)
+	}
+}
+
+func TestSleepFailureAndMissingSleeperAreReported(t *testing.T) {
+	h := newHarness(t)
+	h.queue(h.message(1, 42, "잠자기", h.clock.Now()))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.bot.SleepMac = func(context.Context) error { return errors.New("pmset sleepnow: exit status 1") }
+	h.queue(h.message(2, 42, "sleep", h.clock.Now()))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	texts := h.api.texts(42)
+	if len(texts) != 3 || !strings.Contains(texts[0], "잠자기 기능이 없습니다") || !strings.Contains(texts[2], "재우지 못했습니다") {
+		t.Fatalf("unexpected replies: %v", texts)
+	}
+}
+
 func TestSplitMessageKeepsLinesWhole(t *testing.T) {
 	parts := splitMessage("aaaa\nbbbb\ncc\n"+strings.Repeat("x", 11), 10)
 	expected := []string{"aaaa\nbbbb", "cc", "xxxxxxxxxx", "x"}
@@ -708,6 +769,7 @@ func TestClassifyKeepsDiagnoseApartFromOtherWords(t *testing.T) {
 	cases := map[string]command{
 		"진단": commandDiagnose, "카메라 진단": commandDiagnose, "diag": commandDiagnose,
 		"프로그램 꺼": commandStop, "프로그램 상태": commandStatus, "로그인": commandHelp, "카메라": commandStart,
+		"잠자기": commandSleep, "Mac 재워": commandSleep, "sleep": commandSleep, "잠자기 상태": commandStatus,
 	}
 	for text, expected := range cases {
 		if got := classify(text); got != expected {

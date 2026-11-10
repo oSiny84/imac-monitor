@@ -27,7 +27,7 @@ const DefaultAPIBase = "https://api.telegram.org"
 // ErrConflict is Telegram's 409: another process is long-polling the same bot token.
 var ErrConflict = errors.New("another process is already polling this bot token")
 
-const helpText = "명령: 카메라 (켜고 링크 받기) · 그만 (요청 끝내기) · 상태 (앱 상태 보기) · 진단 (잠자기·카메라 기록 보기)"
+const helpText = "명령: 카메라 (켜고 링크 받기) · 그만 (요청 끝내기) · 상태 (앱 상태 보기) · 진단 (잠자기·카메라 기록 보기) · 잠자기 (Mac 재우기)"
 
 // Telegram refuses messages over 4096 characters; leave room for the part marker.
 const maxMessageRunes = 3900
@@ -51,6 +51,8 @@ type Bot struct {
 	ViewerSeen func() time.Time
 	// Collects the sleep/wake and camera diagnostics; nil when the gateway has none.
 	Diagnose func(context.Context) string
+	// Puts the Mac to sleep; nil when the gateway cannot.
+	SleepMac func(context.Context) error
 	// The window closes this long after the last web viewer renewal, or this long after it
 	// opened when no viewer ever came.
 	ViewerGone      time.Duration
@@ -60,6 +62,11 @@ type Bot struct {
 	RenewEvery      time.Duration
 	StartupTimeout  time.Duration
 	StalenessLimit  time.Duration
+	// A sleep request older than this was sent while the Mac slept and is dropped, so the
+	// wake that delivers it does not send the Mac straight back to sleep.
+	SleepStaleness time.Duration
+	// Time between the reply and the sleep, so the reply and the update offset get out first.
+	SleepDelay time.Duration
 
 	mu     sync.Mutex
 	loaded bool
@@ -87,6 +94,7 @@ const (
 	commandStop
 	commandStatus
 	commandDiagnose
+	commandSleep
 )
 
 type update struct {
@@ -129,6 +137,8 @@ func New(config Config, origin, demandFile, statusFile, stateFile string) *Bot {
 		RenewEvery:      5 * time.Second,
 		StartupTimeout:  60 * time.Second,
 		StalenessLimit:  30 * time.Minute,
+		SleepStaleness:  2 * time.Minute,
+		SleepDelay:      3 * time.Second,
 	}
 }
 
@@ -215,6 +225,25 @@ func (b *Bot) handle(ctx context.Context, item update) {
 		b.setPendingDiagnose(&now)
 		b.reply(ctx, "진단을 모읍니다 · 30초쯤 걸립니다. 그 전에 Mac이 잠들면 다음에 깨어날 때 보냅니다.")
 		b.Background(func() { b.sendDiagnosis(ctx, "") })
+	case commandSleep:
+		if b.SleepMac == nil {
+			b.reply(ctx, "이 게이트웨이에는 잠자기 기능이 없습니다.")
+			return
+		}
+		if age := now.Sub(time.Unix(msg.Date, 0)); age > b.SleepStaleness {
+			b.reply(ctx, fmt.Sprintf("%d분 전에 보낸 잠자기 요청이라 무시했습니다. 지금 재우려면 다시 보내세요.", int(age.Minutes())))
+			return
+		}
+		// An open view window would keep the camera wanted, and the app holds the Mac awake for it.
+		b.setWindow(nil)
+		b.reply(ctx, "Mac을 재웁니다. 깨어날 때까지 명령에 답하지 못합니다. 슬림 모드가 꺼져 있으면 macOS가 스스로 깰 때(길게는 2시간 뒤) 답합니다.")
+		b.Background(func() {
+			b.Sleep(ctx, b.SleepDelay)
+			if err := b.SleepMac(ctx); err != nil {
+				b.Logf("telegram: sleep request failed: %v", err)
+				b.reply(ctx, "Mac을 재우지 못했습니다: "+err.Error())
+			}
+		})
 	case commandStop:
 		b.setWindow(nil)
 		b.reply(ctx, "카메라 요청을 끝냈습니다. 웹에서 보고 있는 사람이 없으면 약 20초 뒤 카메라가 꺼집니다.")
@@ -260,6 +289,7 @@ func isHomeAddress(host string) bool {
 
 // classify reads intent from a few words so the owner need not remember exact commands.
 // Diagnose, status and stop are checked first: "카메라 진단" and "카메라 상태" ask, "카메라 꺼" ends.
+// Sleep comes before stop and start so that "Mac 꺼" style words never decide it.
 func classify(text string) command {
 	lowered := strings.ToLower(strings.TrimSpace(text))
 	has := func(words ...string) bool {
@@ -275,6 +305,8 @@ func classify(text string) command {
 		return commandDiagnose
 	case has("상태", "status"):
 		return commandStatus
+	case has("잠자", "재워", "재우", "sleep"):
+		return commandSleep
 	case has("그만", "꺼", "중지", "stop", "off", "끝"):
 		return commandStop
 	case has("카메라", "보여", "켜", "영상", "live", "cam", "video", "보고"):

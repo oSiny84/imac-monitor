@@ -84,6 +84,7 @@ func serve(arguments []string) {
 			filepath.Join(filepath.Dir(cfg.LiveDemandFile), "telegram-state.json"))
 		bot.ViewerSeen = server.LastViewerDemand
 		bot.Diagnose = diag.New(diag.DefaultDir()).Report
+		bot.SleepMac = sleepMac
 		return bot
 	}, log.Printf)
 
@@ -282,4 +283,13 @@ func setTerminalEcho(enabled bool) error {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: macmonitor-gateway <serve|hash-password|init|check-config> [options]")
 	os.Exit(2)
+}
+
+// sleepMac asks macOS to sleep now, the same request the Apple menu makes. It needs no root.
+func sleepMac(ctx context.Context) error {
+	output, err := exec.CommandContext(ctx, "/usr/bin/pmset", "sleepnow").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("pmset sleepnow: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
