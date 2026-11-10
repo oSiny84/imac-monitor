@@ -744,9 +744,21 @@ if grep -q "$TELEGRAM_TOKEN_2" "$FIXTURE/ask-out.txt"; then
 fi
 echo 'PASS: telegram --ask keeps the configuration on Return and replaces it with a new token'
 
-# The install runs both owner setups. Neither may fail it: a skipped bot, a bot that got no
-# message and a rejected sudoers rule all leave the exit status at 0.
+# The install runs the three owner setups. None may fail it: a failed web setup, a skipped
+# bot, a bot that got no message and a rejected sudoers rule all leave the exit status at 0.
+# The web setup has its own tests below; here a stand-in records the call and writes
+# gateway.json as the real one does on success.
 cp "$ROOT_DIR/scripts/install-setup.sh" "$FIXTURE/scripts/"
+WEB_SETUP_LOG="$FIXTURE/web-setup-calls.log"
+export WEB_SETUP_LOG
+cat > "$FIXTURE/scripts/setup-lan-https.sh" <<'SH'
+#!/bin/bash
+printf 'setup-lan-https %s\n' "$*" >> "$WEB_SETUP_LOG"
+[[ "${TEST_WEB_SETUP:-ok}" == ok ]] || exit 1
+mkdir -p "$MACMONITOR_APP_SUPPORT"
+printf '{}\n' > "$MACMONITOR_APP_SUPPORT/gateway.json"
+SH
+chmod +x "$FIXTURE/scripts/setup-lan-https.sh"
 run_install_setup() {
     local answers="$1"
     printf -- "$answers" | env MACMONITOR_APP_SUPPORT="$TELEGRAM_DATA" MACMONITOR_SUDOERS_DIR="$FIXTURE/sudoers.d" \
@@ -755,14 +767,16 @@ run_install_setup() {
 rm -rf "$TELEGRAM_DATA"
 rm -f "$FIXTURE/sudoers.d/macmonitor"
 : > "$SLIM_LOG"
+: > "$WEB_SETUP_LOG"
 run_install_setup "$TELEGRAM_TOKEN\n" > "$FIXTURE/setup-out.txt" 2>&1 || {
     echo 'FAIL: install setup failed on a first install'
     cat "$FIXTURE/setup-out.txt"
     exit 1
 }
 grep -q "\"botToken\": \"$TELEGRAM_TOKEN\"" "$TELEGRAM_DATA/telegram.json" &&
-    grep -q '^june ALL=(root) NOPASSWD: /usr/bin/pmset schedule wake' "$FIXTURE/sudoers.d/macmonitor" || {
-    echo 'FAIL: a first install must save the bot and install the slim mode rule'
+    grep -q '^june ALL=(root) NOPASSWD: /usr/bin/pmset schedule wake' "$FIXTURE/sudoers.d/macmonitor" &&
+    [[ "$(grep -c '^setup-lan-https' "$WEB_SETUP_LOG")" == 1 && -f "$TELEGRAM_DATA/gateway.json" ]] || {
+    echo 'FAIL: a first install must set up the remote web, save the bot and install the slim mode rule'
     cat "$FIXTURE/setup-out.txt"
     exit 1
 }
@@ -770,15 +784,17 @@ if grep -q "$TELEGRAM_TOKEN" "$FIXTURE/setup-out.txt"; then
     echo 'FAIL: install setup printed the token'
     exit 1
 fi
-echo 'PASS: install setup configures the bot and the slim mode rule on a first install'
+echo 'PASS: install setup configures the remote web, the bot and the slim mode rule on a first install'
 
 cp "$TELEGRAM_DATA/telegram.json" "$FIXTURE/telegram-before.json"
 : > "$SLIM_LOG"
 : > "$TELEGRAM_LOG"
+: > "$WEB_SETUP_LOG"
 run_install_setup '\n' > "$FIXTURE/setup-out.txt" 2>&1 &&
     cmp -s "$TELEGRAM_DATA/telegram.json" "$FIXTURE/telegram-before.json" && [[ ! -s "$TELEGRAM_LOG" ]] &&
-    grep -q '이미 설치되어 있습니다' "$FIXTURE/setup-out.txt" || {
-    echo 'FAIL: a repeated install must keep the bot on Return and skip the installed rule'
+    grep -q '이미 설치되어 있습니다' "$FIXTURE/setup-out.txt" &&
+    [[ ! -s "$WEB_SETUP_LOG" ]] && grep -q '이미 설정되어 있습니다' "$FIXTURE/setup-out.txt" || {
+    echo 'FAIL: a repeated install must leave the remote web alone, keep the bot on Return and skip the installed rule'
     cat "$FIXTURE/setup-out.txt"
     exit 1
 }
@@ -805,15 +821,16 @@ grep -q '^sudo install' "$SLIM_LOG" && grep -q '설치하지 못했습니다' "$
 rm -rf "$TELEGRAM_DATA"
 rm -f "$FIXTURE/sudoers.d/macmonitor"
 : > "$SLIM_LOG"
-TEST_TELEGRAM_UPDATES=none TEST_VISUDO=fail run_install_setup "$TELEGRAM_TOKEN\n" > "$FIXTURE/setup-out.txt" 2>&1 || {
-    echo 'FAIL: install setup must exit 0 when both steps fail'
+TEST_WEB_SETUP=fail TEST_TELEGRAM_UPDATES=none TEST_VISUDO=fail run_install_setup "$TELEGRAM_TOKEN\n" > "$FIXTURE/setup-out.txt" 2>&1 || {
+    echo 'FAIL: install setup must exit 0 when every step fails'
     cat "$FIXTURE/setup-out.txt"
     exit 1
 }
-[[ ! -e "$TELEGRAM_DATA/telegram.json" && ! -e "$FIXTURE/sudoers.d/macmonitor" ]] &&
+[[ ! -e "$TELEGRAM_DATA/telegram.json" && ! -e "$FIXTURE/sudoers.d/macmonitor" && ! -e "$TELEGRAM_DATA/gateway.json" ]] &&
+    grep -q '원격 웹 설정을 마치지 못했습니다' "$FIXTURE/setup-out.txt" &&
     grep -q '텔레그램 설정을 마치지 못했습니다' "$FIXTURE/setup-out.txt" &&
     grep -q '^sudo visudo' "$SLIM_LOG" && grep -q '슬림 모드 권한을 설치하지 못했습니다' "$FIXTURE/setup-out.txt" || {
-    echo 'FAIL: a failed bot setup must be reported and must not stop the slim mode step'
+    echo 'FAIL: a failed web or bot setup must be reported and must not stop the later steps'
     cat "$FIXTURE/setup-out.txt"
     exit 1
 }
@@ -824,6 +841,7 @@ echo 'PASS: install setup reports a failed step and still finishes'
 INTERRUPT="$FIXTURE/interrupt"
 mkdir -p "$INTERRUPT"
 cp "$ROOT_DIR/scripts/install-setup.sh" "$INTERRUPT/"
+printf '#!/bin/bash\nexit 0\n' > "$INTERRUPT/setup-lan-https.sh"
 cat > "$INTERRUPT/configure-telegram.sh" <<'SH'
 #!/bin/bash
 kill -INT "$PPID"
@@ -835,7 +853,7 @@ cat > "$INTERRUPT/enable-slim-mode.sh" <<'SH'
 echo 'slim step ran'
 SH
 rm -f "$FIXTURE/sudoers.d/macmonitor"
-env MACMONITOR_SUDOERS_DIR="$FIXTURE/sudoers.d" bash "$INTERRUPT/install-setup.sh" </dev/null > "$FIXTURE/setup-out.txt" 2>&1 &&
+env MACMONITOR_APP_SUPPORT="$INTERRUPT/data" MACMONITOR_SUDOERS_DIR="$FIXTURE/sudoers.d" bash "$INTERRUPT/install-setup.sh" </dev/null > "$FIXTURE/setup-out.txt" 2>&1 &&
     grep -q '텔레그램 설정을 마치지 못했습니다' "$FIXTURE/setup-out.txt" && grep -q 'slim step ran' "$FIXTURE/setup-out.txt" || {
     echo 'FAIL: Control-C during the bot step must be reported and must not end the whole setup'
     cat "$FIXTURE/setup-out.txt"

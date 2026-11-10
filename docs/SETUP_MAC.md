@@ -39,7 +39,7 @@ sudo xattr -d com.apple.quarantine /usr/local/bin/ffmpeg 2>/dev/null || true
 
 ## 2. 의존성 및 앱 빌드
 
-Finder에서 저장소 루트의 `Build MacMonitor.command`를 더블클릭하면 아래 준비와 빌드 절차를 한 번에 실행합니다. MediaMTX 1.21.1이 없으면 체크섬 검증 후 내려받고, 스크립트 권한 설정, 일반 테스트와 Thread Sanitizer, 앱 패키징, 실행 전 진단을 거친 뒤, 앱을 열기 전에 같은 창에서 텔레그램 봇(7절)과 슬림 모드 깨우기 권한(9절)을 설정하고 성공한 앱을 자동 실행합니다. 봇 토큰은 Return만 누르면 건너뛰고, 슬림 모드 권한은 비밀번호 대신 Control-C를 누르면 건너뜁니다. 두 설정은 실패해도 빌드는 성공으로 끝납니다. 새 ZIP으로 다시 설치할 때는 `Uninstall MacMonitor.command`를 먼저 실행하지 않습니다. 실행하면 봇·웹·비밀번호 설정이 지워집니다. 터미널 출력은 `dist/build-날짜-시간.log`에도 보존되며 실패 시 창을 닫지 않고 오류를 표시합니다.
+Finder에서 저장소 루트의 `Build MacMonitor.command`를 더블클릭하면 아래 준비와 빌드 절차를 한 번에 실행합니다. MediaMTX 1.21.1이 없으면 체크섬 검증 후 내려받고, 스크립트 권한 설정, 일반 테스트와 Thread Sanitizer, 앱 패키징, 실행 전 진단을 거친 뒤, 앱을 열기 전에 같은 창에서 원격 웹(4절 "같은 Wi-Fi에서 쓰기", 설정이 없을 때만), 텔레그램 봇(7절), 슬림 모드 깨우기 권한(9절)을 설정하고 성공한 앱을 자동 실행합니다. 텔레그램 봇은 원격 웹 서버(게이트웨이) 안에서 돌기 때문에 `gateway.json`이 없으면 토큰을 저장해도 답하지 않습니다. 봇 토큰은 Return만 누르면 건너뛰고, 원격 웹과 슬림 모드 권한은 비밀번호 대신 Control-C를 누르면 건너뜁니다. 두 설정은 실패해도 빌드는 성공으로 끝납니다. 새 ZIP으로 다시 설치할 때는 `Uninstall MacMonitor.command`를 먼저 실행하지 않습니다. 실행하면 봇·웹·비밀번호 설정이 지워집니다. 터미널 출력은 `dist/build-날짜-시간.log`에도 보존되며 실패 시 창을 닫지 않고 오류를 표시합니다.
 
 개별 명령으로 실행하려면 다음 순서를 사용합니다.
 
@@ -124,7 +124,7 @@ HTTPS 웹 서버는 앱 비밀번호 확인 후 카메라와 독립적으로 실
 
 ### 같은 Wi-Fi에서 쓰기 (더블클릭)
 
-도메인과 포트포워딩 없이 자체 서명 인증서로 같은 Wi-Fi의 휴대폰에서 접속합니다. 앱을 한 번 빌드한 뒤 폴더의 `Setup Remote Web.command`를 더블클릭합니다. 터미널에서는 `./scripts/setup-lan-https.sh`와 같습니다.
+도메인과 포트포워딩 없이 자체 서명 인증서로 같은 Wi-Fi의 휴대폰에서 접속합니다. 설정이 없으면 `Build MacMonitor.command`가 빌드 끝에 이 설정을 실행합니다. 그 뒤 Mac 주소가 바뀌었을 때나 따로 하려면 폴더의 `Setup Remote Web.command`를 더블클릭합니다. 터미널에서는 `./scripts/setup-lan-https.sh`와 같습니다.
 
 1. 이 Mac의 현재 주소(기본 경로의 인터페이스, 없으면 `en0`·`en1`)를 찾습니다.
 2. 그 주소용 인증서(1년, 서버 인증 용도)를 `~/Library/Application Support/MacMonitor/LAN-HTTPS/` 아래 새 폴더에 만듭니다.

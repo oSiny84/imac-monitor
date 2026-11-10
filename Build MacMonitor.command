@@ -61,11 +61,11 @@ MACMONITOR_TSAN=1 "$ROOT_DIR/scripts/build-app.sh"
 printf '\n실행 전 진단을 시작합니다.\n'
 "$ROOT_DIR/scripts/diagnose.sh"
 
-# Owner setup (Telegram bot, slim mode rule) only when someone is at the keyboard. It runs
-# before the app starts so the gateway finds telegram.json at launch. Neither step can fail
-# the build; Control-C ends the step in progress, not this script.
+# Owner setup (remote web, Telegram bot, slim mode rule) only when someone is at the
+# keyboard. It runs before the app starts so the gateway finds gateway.json and telegram.json
+# at launch. No step can fail the build; Control-C ends the step in progress, not this script.
 if [[ -t 0 ]]; then
-    printf '\n빌드가 끝났습니다. 앱을 열기 전에 설정 두 가지를 확인합니다.\n\n'
+    printf '\n빌드가 끝났습니다. 앱을 열기 전에 설정 세 가지를 확인합니다.\n\n'
     trap 'printf "\n"' INT
     "$ROOT_DIR/scripts/install-setup.sh" || true
     trap - INT
