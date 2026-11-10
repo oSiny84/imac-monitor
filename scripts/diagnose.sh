@@ -284,13 +284,17 @@ else
 fi
 
 APP_CONFIG="$APP_SUPPORT/config.json"
+# plutil cannot read JSON on macOS 12: `plutil -lint` rejected the app's own valid config.json
+# with "Unexpected character { at line 1" (2026-11-10). JavaScript for Automation ships with
+# every macOS and parses it with JSON.parse; a parse error makes osascript exit non-zero.
+CONFIG_JSON_CHECK='function run(argv) { JSON.parse($.NSString.stringWithContentsOfFileEncodingError(argv[0], $.NSUTF8StringEncoding, $()).js); }'
 if [[ -f "$APP_CONFIG" ]]; then
-    if LINT_OUTPUT="$(plutil -lint "$APP_CONFIG" 2>&1)"; then
+    if CHECK_OUTPUT="$(osascript -l JavaScript -e "$CONFIG_JSON_CHECK" "$APP_CONFIG" 2>&1 >/dev/null)"; then
         pass "app configuration JSON is structurally valid"
     else
         fail "app configuration JSON is invalid"
         # The settings hold no secrets, so the reason and the file go into the build log.
-        printf '%s\n' "$LINT_OUTPUT" | sed 's/^/       plutil: /'
+        printf '%s\n' "$CHECK_OUTPUT" | sed 's/^/       osascript: /'
         echo "       config.json:"
         sed 's/^/         /' "$APP_CONFIG"
         echo

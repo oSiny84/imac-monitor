@@ -128,6 +128,61 @@ SH
     echo "PASS: $script handles long encoder output, missing encoder, and command failure"
 done
 
+# diagnose.sh checks config.json with the JSON.parse script it hands to osascript. On a Mac the
+# real osascript runs it; elsewhere Node runs the same script with the one Cocoa call stubbed.
+CONFIG_CHECK_DIR="$FIXTURE/config-check"
+mkdir -p "$CONFIG_CHECK_DIR/bin" "$CONFIG_CHECK_DIR/data"
+sed -n '/^APP_CONFIG=/,/^fi$/p' "$ROOT_DIR/scripts/diagnose.sh" > "$CONFIG_CHECK_DIR/check.sh"
+grep -q 'osascript -l JavaScript' "$CONFIG_CHECK_DIR/check.sh" && ! grep -v '^[[:space:]]*#' "$CONFIG_CHECK_DIR/check.sh" | grep -q 'plutil' || {
+    echo 'FAIL: diagnose.sh must check config.json with JSON.parse, not plutil (which cannot read JSON on macOS 12)'
+    exit 1
+}
+CONFIG_CHECK_RUNNER=""
+if [[ "$(uname -s)" == Darwin ]] && command -v osascript >/dev/null 2>&1; then
+    CONFIG_CHECK_RUNNER=real
+elif command -v node >/dev/null 2>&1; then
+    CONFIG_CHECK_RUNNER=node
+    cat > "$CONFIG_CHECK_DIR/bin/osascript" <<'SH'
+#!/bin/bash
+[[ "$1" == -l && "$2" == JavaScript && "$3" == -e ]] || exit 2
+exec node -e '
+const fs = require("fs");
+const $ = Object.assign(() => null, { NSUTF8StringEncoding: 4, NSString: {
+    stringWithContentsOfFileEncodingError: (path) => ({ js: fs.existsSync(path) ? fs.readFileSync(path, "utf8") : undefined }) } });
+eval(process.argv[1]);
+run([process.argv[2]]);
+' "$4" "$5"
+SH
+    chmod +x "$CONFIG_CHECK_DIR/bin/osascript"
+fi
+if [[ -n "$CONFIG_CHECK_RUNNER" ]]; then
+    run_config_check() {
+        env PATH="$CONFIG_CHECK_DIR/bin:$PATH" APP_SUPPORT="$CONFIG_CHECK_DIR/data" bash -c '
+            pass() { echo "[PASS] $*"; }; fail() { echo "[FAIL] $*"; }; warn() { echo "[WARN] $*"; }; check_mode() { :; }
+            source "$1"' _ "$CONFIG_CHECK_DIR/check.sh"
+    }
+    # The file the app wrote on the iMac on 2026-11-10, including the empty array split over
+    # two lines and the missing final newline.
+    printf '{\n  "audioEnabled" : true,\n  "externalWebRTCHosts" : [\n\n  ],\n  "liveStandby" : true,\n  "minimumFreeGigabytes" : 5,\n  "retentionDays" : 14,\n  "retentionMaxGigabytes" : 20,\n  "sleepSchedule" : {\n    "enabled" : false,\n    "mode" : "systemSleep",\n    "sleepMinute" : 1380,\n    "wakeMinute" : 360\n  },\n  "slimMode" : {\n    "enabled" : false,\n    "wakeIntervalMinutes" : 10\n  },\n  "videoBitrateKbps" : 1200\n}' > "$CONFIG_CHECK_DIR/data/config.json"
+    run_config_check > "$CONFIG_CHECK_DIR/out.txt" 2>&1
+    grep -q '^\[PASS\] app configuration JSON is structurally valid$' "$CONFIG_CHECK_DIR/out.txt" || {
+        echo "FAIL: diagnose.sh rejected the config.json the app wrote ($CONFIG_CHECK_RUNNER osascript)"
+        cat "$CONFIG_CHECK_DIR/out.txt"
+        exit 1
+    }
+    printf '{\n  "audioEnabled" : true,\n  "videoBitrateKbps" : \n' > "$CONFIG_CHECK_DIR/data/config.json"
+    run_config_check > "$CONFIG_CHECK_DIR/out.txt" 2>&1
+    grep -q '^\[FAIL\] app configuration JSON is invalid$' "$CONFIG_CHECK_DIR/out.txt" &&
+        grep -q '^       osascript: ' "$CONFIG_CHECK_DIR/out.txt" && grep -q '"videoBitrateKbps" :' "$CONFIG_CHECK_DIR/out.txt" || {
+        echo "FAIL: diagnose.sh must reject a truncated config.json and show why ($CONFIG_CHECK_RUNNER osascript)"
+        cat "$CONFIG_CHECK_DIR/out.txt"
+        exit 1
+    }
+    echo "PASS: diagnose.sh accepts the app's config.json and explains a broken one ($CONFIG_CHECK_RUNNER osascript)"
+else
+    echo 'SKIP: neither osascript nor node is available to run the config.json check'
+fi
+
 # Xcode 14's swift-driver writes its own version to stderr without a newline,
 # so a terminal shows it joined to the Swift version line.
 cat > "$FIXTURE/bin/swift" <<'SH'
