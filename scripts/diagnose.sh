@@ -285,10 +285,15 @@ fi
 
 APP_CONFIG="$APP_SUPPORT/config.json"
 if [[ -f "$APP_CONFIG" ]]; then
-    if plutil -lint "$APP_CONFIG" >/dev/null 2>&1; then
+    if LINT_OUTPUT="$(plutil -lint "$APP_CONFIG" 2>&1)"; then
         pass "app configuration JSON is structurally valid"
     else
         fail "app configuration JSON is invalid"
+        # The settings hold no secrets, so the reason and the file go into the build log.
+        printf '%s\n' "$LINT_OUTPUT" | sed 's/^/       plutil: /'
+        echo "       config.json:"
+        sed 's/^/         /' "$APP_CONFIG"
+        echo
     fi
     check_mode "$APP_CONFIG" "600"
 else
