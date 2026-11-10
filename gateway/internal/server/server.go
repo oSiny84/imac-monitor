@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
@@ -40,6 +41,8 @@ type Server struct {
 	mediaProxy   *httputil.ReverseProxy
 	httpClient   *http.Client
 	static       http.Handler
+	// The Origin header values accepted on state-changing requests, from config.AllowedOrigins.
+	allowedOrigins map[string]bool
 	// Unix nanoseconds of the last live-lease renewal by a web viewer; read by the chat bot.
 	lastViewerDemand atomic.Int64
 }
@@ -87,6 +90,9 @@ func New(cfg config.Config) (*Server, error) {
 		http.Error(writer, "live stream is temporarily unavailable", http.StatusBadGateway)
 	}
 	proxy.ModifyResponse = func(response *http.Response) error {
+		if err := addReachableCandidates(response); err != nil {
+			return err
+		}
 		location := response.Header.Get("Location")
 		if location == "" {
 			return nil
@@ -110,16 +116,29 @@ func New(cfg config.Config) (*Server, error) {
 	proxy.FlushInterval = -1
 
 	return &Server{
-		config:       cfg,
-		sessions:     auth.NewSessionStore(cfg.SessionIdleTTL(), cfg.SessionMaxTTL()),
-		loginLimiter: auth.NewLoginLimiter(),
-		recordings:   store,
-		thumbnails:   recordings.NewThumbnails(store),
-		mediaTarget:  mediaTarget,
-		mediaProxy:   proxy,
-		httpClient:   &http.Client{Timeout: 2 * time.Second},
-		static:       http.FileServer(http.FS(staticFS)),
+		config:         cfg,
+		sessions:       auth.NewSessionStore(cfg.SessionIdleTTL(), cfg.SessionMaxTTL()),
+		loginLimiter:   auth.NewLoginLimiter(),
+		recordings:     store,
+		thumbnails:     recordings.NewThumbnails(store),
+		mediaTarget:    mediaTarget,
+		mediaProxy:     proxy,
+		httpClient:     &http.Client{Timeout: 2 * time.Second},
+		static:         http.FileServer(http.FS(staticFS)),
+		allowedOrigins: originSet(cfg.AllowedOrigins()),
 	}, nil
+}
+
+// originSet never holds the empty string, so a request without an Origin header is refused
+// even when the configuration was never validated.
+func originSet(origins []string) map[string]bool {
+	set := make(map[string]bool, len(origins))
+	for _, origin := range origins {
+		if origin != "" {
+			set[origin] = true
+		}
+	}
+	return set
 }
 
 func (s *Server) Handler() http.Handler {
@@ -376,7 +395,39 @@ func (s *Server) serveRecording(writer http.ResponseWriter, request *http.Reques
 }
 
 func (s *Server) proxyLive(writer http.ResponseWriter, request *http.Request) {
-	s.mediaProxy.ServeHTTP(writer, request)
+	s.mediaProxy.ServeHTTP(writer, request.WithContext(withClientHost(request.Context(), request.Host)))
+}
+
+// maxSDPBytes bounds how much of a WHEP answer is read for rewriting; a larger body passes as is.
+const maxSDPBytes = 1 << 20
+
+// addReachableCandidates adds the address the phone used to a WHEP answer (see ice.go).
+func addReachableCandidates(response *http.Response) error {
+	if response.Request == nil || response.Request.Method != http.MethodPost || response.StatusCode != http.StatusCreated ||
+		!strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "application/sdp") {
+		return nil
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxSDPBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(body) > maxSDPBytes {
+		response.Body = struct {
+			io.Reader
+			io.Closer
+		}{io.MultiReader(bytes.NewReader(body), response.Body), response.Body}
+		return nil
+	}
+	_ = response.Body.Close()
+	rewritten := body
+	if bytes.Contains(body, []byte("a=candidate:")) {
+		addresses := candidateAddressesForHost(response.Request.Context(), clientHostFrom(response.Request.Context()))
+		rewritten = []byte(addHostCandidates(string(body), addresses))
+	}
+	response.Body = io.NopCloser(bytes.NewReader(rewritten))
+	response.ContentLength = int64(len(rewritten))
+	response.Header.Set("Content-Length", strconv.Itoa(len(rewritten)))
+	return nil
 }
 
 func (s *Server) requireSession(next http.Handler) http.Handler {
@@ -402,13 +453,27 @@ func (s *Server) requestSession(request *http.Request) (string, auth.Session, bo
 func (s *Server) originProtection(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet && request.Method != http.MethodHead && request.Method != http.MethodOptions {
-			if request.Header.Get("Origin") != s.config.PublicOrigin {
+			origin := request.Header.Get("Origin")
+			if !s.allowedOrigins[origin] && (origin == "" || origin != hostOrigin(request.Host)) {
 				writeError(writer, http.StatusForbidden, "허용되지 않은 요청 출처입니다.")
 				return
 			}
 		}
 		next.ServeHTTP(writer, request)
 	})
+}
+
+// hostOrigin is the origin of a page opened at the address in the Host header. A browser
+// sends that origin only from a page it loaded from this gateway at that same address, so
+// matching it lets the owner open any address that reaches the Mac (home Wi-Fi, public IP,
+// DDNS, Tailscale) without listing it. Another site cannot pass: its pages carry its own
+// origin, and a name that merely resolves here fails TLS unless the owner clicks through a
+// certificate warning for that foreign name.
+func hostOrigin(host string) string {
+	if host == "" || strings.ContainsAny(host, "/@?#\\ ") {
+		return ""
+	}
+	return config.CanonicalOrigin("https://" + host)
 }
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {

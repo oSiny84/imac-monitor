@@ -57,7 +57,7 @@ Mac으로 옮길 최신 소스 ZIP은 [releases](releases/)에 있습니다. 날
 
 전체 순서는 [docs/SETUP_MAC.md](docs/SETUP_MAC.md)에 있습니다. 요약하면 다음과 같습니다.
 
-명령어 없이 실행하려면 Finder에서 저장소 루트의 `Build MacMonitor.command`를 더블클릭합니다. 필요한 MediaMTX 준비, 테스트, Thread Sanitizer, 앱 빌드, 실행 전 진단과 앱 실행까지 이어서 처리하며 전체 출력은 `dist/build-날짜-시간.log`에 저장합니다. 같은 Wi-Fi의 휴대폰에서 접속하려면 빌드 뒤 `Setup Remote Web.command`를 더블클릭합니다. 인증서와 웹 설정을 만들고 열 주소를 보여 주며, Mac 주소가 바뀌었을 때만 다시 실행하면 됩니다.
+명령어 없이 실행하려면 Finder에서 저장소 루트의 `Build MacMonitor.command`를 더블클릭합니다. 필요한 MediaMTX 준비, 테스트, Thread Sanitizer, 앱 빌드, 실행 전 진단과 앱 실행까지 이어서 처리하며 전체 출력은 `dist/build-날짜-시간.log`에 저장합니다. 같은 Wi-Fi의 휴대폰에서 접속하려면 빌드 뒤 `Setup Remote Web.command`를 더블클릭합니다. 인증서와 웹 설정을 만들고 열 주소를 보여 주며, Mac 주소가 바뀌었을 때만 다시 실행하면 됩니다. 밖(휴대폰 데이터망)에서는 공유기 포트포워딩만 하고 `https://공인IP:8443`을 열면 되며, 공인 IP를 설정에 적을 필요는 없습니다. Tailscale 주소도 됩니다(`docs/SETUP_MAC.md` 4절).
 
 터미널에서 개별 실행하려면 다음 명령을 사용합니다.
 
@@ -73,7 +73,7 @@ open dist/MacMonitor.app
 
 `diagnose.sh`는 앱 실행 전에 VideoToolbox 실제 1프레임 인코딩, 번들 아키텍처와 서명, MediaMTX 버전과 생성 설정, 앱 데이터 권한을 확인합니다. 게이트웨이가 설정되어 있으면 JSON, 인증서/개인키 짝, 인증서 유효기간·호스트명, 녹화 경로도 서버를 열지 않고 검사합니다. 실패 항목이 하나라도 있으면 종료 코드 1을 반환합니다.
 
-첫 실행 후 메뉴 막대의 `설정…`에서 외부 WebRTC 호스트를 저장합니다. HTTPS까지 설정하면 앱이 카메라 권한을 묻습니다. 승인해 두면 이후 원격 접속 때 카메라가 저절로 켜집니다. 움직임 녹화를 쓰려면 메뉴의 `움직임 녹화 시작`을 누릅니다.
+메뉴 막대의 `설정…`에 있는 외부 WebRTC 호스트는 비워 둬도 됩니다(게이트웨이가 휴대폰이 연 주소를 영상 연결에 더합니다). HTTPS까지 설정하면 앱이 카메라 권한을 묻습니다. 승인해 두면 이후 원격 접속 때 카메라가 저절로 켜집니다. 움직임 녹화를 쓰려면 메뉴의 `움직임 녹화 시작`을 누릅니다.
 
 텔레그램으로 켜려면 `./scripts/configure-telegram.sh <봇 토큰>`을 실행하고 안내대로 봇에게 메시지를 한 번 보냅니다. Mac을 평소에 재워 두려면 `./scripts/enable-slim-mode.sh`로 깨우기 예약 권한을 넣은 뒤 설정에서 `슬림 모드`를 켭니다. 두 절차는 [docs/SETUP_MAC.md](docs/SETUP_MAC.md) 7~9절에 있습니다.
 

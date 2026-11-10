@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -230,6 +232,30 @@ func (b *Bot) handle(ctx context.Context, item update) {
 	default:
 		b.reply(ctx, helpText)
 	}
+}
+
+// DescribeOrigins writes the web addresses for a reply. With more than one, each is labelled so
+// the owner can tell the home Wi-Fi address from the one that works outside.
+func DescribeOrigins(origins []string) string {
+	if len(origins) == 1 {
+		return origins[0]
+	}
+	parts := make([]string, 0, len(origins))
+	for _, origin := range origins {
+		label := "밖에서"
+		if parsed, err := url.Parse(origin); err == nil && isHomeAddress(parsed.Hostname()) {
+			label = "집 Wi-Fi"
+		}
+		parts = append(parts, label+" "+origin)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func isHomeAddress(host string) bool {
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
+	}
+	return strings.HasSuffix(strings.ToLower(host), ".local")
 }
 
 // classify reads intent from a few words so the owner need not remember exact commands.

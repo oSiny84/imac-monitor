@@ -131,8 +131,10 @@ GitHub 다운로드가 504 등으로 실패하면 GitHub API 주소로 한 번 �
 같은 Wi-Fi 접속: 폴더의 Setup Remote Web.command를 더블클릭하면 도메인 없이 됩니다.
   마지막에 나오는 https://192.168.x.x:8443 주소를 휴대폰에서 엽니다. 재부팅마다 할 필요는 없고,
   Mac 주소가 바뀌었을 때만 다시 더블클릭합니다. 자세한 설명: docs/SETUP_MAC.md 4절
-외부망 시험 준비: docs/SETUP_MAC.md 3~5번의 외부 WebRTC 호스트, HTTPS 인증서, 포트포워딩.
-외부망은 터미널에서 curl -s https://ifconfig.me 결과가 공유기 WAN IP와 같아야 합니다.
+외부망 시험 준비: 공유기에서 TCP 8443과 UDP·TCP 8189를 이 Mac으로 포트포워딩합니다(docs/SETUP_MAC.md 5번).
+  공인 IP는 어디에도 적지 않아도 됩니다. 휴대폰에서 https://공인IP:8443 을 엽니다.
+  Tailscale을 쓰면 포트포워딩 없이 Mac의 Tailscale 주소(https://100.x.x.x:8443)를 엽니다.
+외부망은 터미널에서 curl -4 -s https://ifconfig.me 결과가 공유기 WAN IP와 같아야 합니다.
 다르면 통신사 NAT(CGNAT)라서 외부 접속이 되지 않습니다.
 - 앱을 실행하고 비밀번호를 넣습니다.
 - 메뉴에 원격 접속 — 웹 서버 실행 중, 원격 시청 대기 체크, 원격 시청 대기 중이 보이는지 확인합니다.

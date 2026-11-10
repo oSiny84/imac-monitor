@@ -1,6 +1,7 @@
 #!/bin/bash
 # Double-click: set up (or check) HTTPS for phones on the same Wi-Fi. Runs
-# scripts/setup-lan-https.sh, which asks nothing when the setup is already current.
+# scripts/setup-lan-https.sh, which asks nothing when the setup is already current. Outside
+# home needs only port forwarding (or Tailscale); the gateway accepts the address the phone opened.
 set -uo pipefail
 
 # System tools first: route and ipconfig live in /usr/sbin, and a conda or Homebrew openssl

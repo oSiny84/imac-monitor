@@ -80,7 +80,7 @@ func serve(arguments []string) {
 	// The bot is optional and follows telegram.json on its own, so a missing or broken file
 	// never stops the web server. The process ends with the app, which also ends the bot.
 	go chat.Supervise(context.Background(), cfg.TelegramFile, 10*time.Second, func(telegram chat.Config) *chat.Bot {
-		bot := chat.New(telegram, cfg.PublicOrigin, cfg.LiveDemandFile, cfg.MonitoringStatusFile,
+		bot := chat.New(telegram, chat.DescribeOrigins(cfg.AllowedOrigins()), cfg.LiveDemandFile, cfg.MonitoringStatusFile,
 			filepath.Join(filepath.Dir(cfg.LiveDemandFile), "telegram-state.json"))
 		bot.ViewerSeen = server.LastViewerDemand
 		bot.Diagnose = diag.New(diag.DefaultDir()).Report
@@ -112,6 +112,12 @@ func initialize(arguments []string) {
 	certificate := flags.String("cert", "", "absolute TLS certificate path")
 	privateKey := flags.String("key", "", "absolute TLS private key path")
 	recordings := flags.String("recordings", "", "absolute recordings directory")
+	var alsoOrigins []string
+	flags.Func("also-origin", "another HTTPS origin of this gateway, for example the external address; repeatable",
+		func(value string) error {
+			alsoOrigins = append(alsoOrigins, value)
+			return nil
+		})
 	_ = flags.Parse(arguments)
 	if *output == "" || *origin == "" || *certificate == "" || *privateKey == "" || *recordings == "" {
 		flags.Usage()
@@ -132,6 +138,7 @@ func initialize(arguments []string) {
 		TLSCertificateFile:  *certificate,
 		TLSPrivateKeyFile:   *privateKey,
 		PublicOrigin:        *origin,
+		AdditionalOrigins:   alsoOrigins,
 		MediaMTXURL:         "http://127.0.0.1:8889",
 		RecordingsDirectory: *recordings,
 		PasswordHash:        hash,
@@ -182,6 +189,9 @@ func checkConfig(arguments []string) {
 	if err := certificate.VerifyHostname(origin.Hostname()); err != nil {
 		log.Fatalf("TLS certificate does not match %s: %v", origin.Hostname(), err)
 	}
+	// An extra address the certificate does not name still works after the browser warning,
+	// as with a domain certificate and the home Wi-Fi address, so it is reported, not refused.
+	uncovered := uncoveredOrigins(certificate, cfg.AdditionalOrigins)
 	privateKeyInfo, err := os.Stat(cfg.TLSPrivateKeyFile)
 	if err != nil {
 		log.Fatalf("private key error: %v", err)
@@ -215,10 +225,28 @@ func checkConfig(arguments []string) {
 
 	fmt.Printf("gateway configuration: OK\n")
 	fmt.Printf("public origin: %s\n", cfg.PublicOrigin)
+	for _, extra := range cfg.AdditionalOrigins {
+		fmt.Printf("also allowed origin: %s\n", extra)
+	}
+	for _, extra := range uncovered {
+		fmt.Printf("warning: the TLS certificate does not name %s; browsers will warn there\n", extra)
+	}
 	fmt.Printf("listen address: %s\n", cfg.ListenAddress)
 	fmt.Printf("certificate expires: %s\n", certificate.NotAfter.Format(time.RFC3339))
 	fmt.Printf("recordings directory: %s\n", cfg.RecordingsDirectory)
 	fmt.Printf("%s\n", telegramSummary)
+}
+
+// uncoveredOrigins lists the origins whose host the certificate does not name.
+func uncoveredOrigins(certificate *x509.Certificate, origins []string) []string {
+	var uncovered []string
+	for _, raw := range origins {
+		parsed, err := url.Parse(raw)
+		if err != nil || certificate.VerifyHostname(parsed.Hostname()) != nil {
+			uncovered = append(uncovered, raw)
+		}
+	}
+	return uncovered
 }
 
 func readPassword(prompt string) string {

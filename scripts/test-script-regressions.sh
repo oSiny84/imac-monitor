@@ -20,6 +20,7 @@ cat > "$FIXTURE/dist/MacMonitor.app/Contents/Helpers/macmonitor-gateway" <<'SH'
 set -eu
 command_name="$1"
 shift
+printf '%s %s\n' "$command_name" "$*" >> "${MACMONITOR_APP_SUPPORT%/*}/gateway-calls.log"
 candidate=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -77,6 +78,23 @@ run_configure
 [[ "$(cat "$MACMONITOR_APP_SUPPORT/gateway.json")" == candidate ]]
 assert_no_candidate
 echo 'PASS: valid candidate replaces original configuration'
+
+: > "$FIXTURE/gateway-calls.log"
+bash "$FIXTURE/scripts/configure-gateway.sh" --also-origin https://203.0.113.5:8443 \
+    https://192.168.0.7:8443 "$FIXTURE/cert.pem" "$FIXTURE/key.pem" >/dev/null 2>&1 || {
+    echo 'FAIL: configure-gateway.sh refused --also-origin'
+    exit 1
+}
+grep -q '^init .*-origin https://192.168.0.7:8443 -also-origin https://203.0.113.5:8443 ' "$FIXTURE/gateway-calls.log" || {
+    echo 'FAIL: configure-gateway.sh did not pass --also-origin to the gateway init'
+    cat "$FIXTURE/gateway-calls.log"
+    exit 1
+}
+if bash "$FIXTURE/scripts/configure-gateway.sh" --also-origin >/dev/null 2>&1; then
+    echo 'FAIL: configure-gateway.sh accepted --also-origin without a value'
+    exit 1
+fi
+echo 'PASS: configure-gateway.sh passes each --also-origin to the gateway'
 
 # Exercise the actual pipelines extracted from both production scripts.
 for script in build-app.sh diagnose.sh; do
@@ -607,11 +625,21 @@ cp "$ROOT_DIR/scripts/setup-lan-https.sh" "$LAN/scripts/"
 cat > "$LAN/scripts/configure-gateway.sh" <<'SH'
 #!/bin/bash
 set -eu
+also=()
+while [[ "$1" == --also-origin ]]; do also+=("$2"); shift 2; done
 printf 'configure %s|%s|%s\n' "$1" "$2" "$3" >> "$LAN_LOG"
+for origin in ${also[@]+"${also[@]}"}; do printf 'also %s\n' "$origin" >> "$LAN_LOG"; done
 [[ "${TEST_CONFIGURE_FAIL:-0}" != 1 ]] || exit 1
 mkdir -p "$MACMONITOR_APP_SUPPORT"
-printf '{\n  "listenAddress": ":8443",\n  "tlsCertificateFile": "%s",\n  "tlsPrivateKeyFile": "%s",\n  "publicOrigin": "%s"\n}\n' \
-    "$2" "$3" "$1" > "$MACMONITOR_APP_SUPPORT/gateway.json"
+{
+    printf '{\n  "listenAddress": ":8443",\n  "tlsCertificateFile": "%s",\n  "tlsPrivateKeyFile": "%s",\n  "publicOrigin": "%s",\n' "$2" "$3" "$1"
+    if [[ ${#also[@]} -gt 0 ]]; then
+        printf '  "additionalOrigins": [\n'
+        printf '    "%s"\n' "${also[@]}"
+        printf '  ],\n'
+    fi
+    printf '  "mediaMTXURL": "http://127.0.0.1:8889"\n}\n'
+} > "$MACMONITOR_APP_SUPPORT/gateway.json"
 SH
 cat > "$LAN/bin/route" <<'SH'
 #!/bin/bash
@@ -678,7 +706,9 @@ run_lan TEST_ROUTE_IFACE=en1 TEST_LAN_IFACE=en1 TEST_LAN_IP=192.168.0.7 > "$LAN/
 }
 grep -q '^configure https://192.168.0.7:8443|'"$LAN_DATA"'/LAN-HTTPS/[0-9A-Za-z-]*/cert.pem|'"$LAN_DATA"'/LAN-HTTPS/[0-9A-Za-z-]*/key.pem$' "$LAN_LOG" &&
     grep -q '^subjectAltName = IP:192.168.0.7$' "$LAN_LOG" && grep -q '^extendedKeyUsage = serverAuth$' "$LAN_LOG" &&
-    grep -q '^req days=365$' "$LAN_LOG" && grep -q 'https://192.168.0.7:8443' "$LAN/out.txt" || {
+    grep -q '^req days=365$' "$LAN_LOG" && grep -q 'https://192.168.0.7:8443' "$LAN/out.txt" &&
+    grep -q '웹: 외부 TCP 8443 → 이 Mac의 TCP 8443' "$LAN/out.txt" && grep -q 'https://공인IP:8443' "$LAN/out.txt" &&
+    grep -q 'Tailscale(권장)' "$LAN/out.txt" && grep -q '경고가 다시 나오면 진행하지 마세요' "$LAN/out.txt" || {
     echo 'FAIL: first LAN setup did not use the default-route address, a server certificate and the gateway setup'
     cat "$LAN_LOG" "$LAN/out.txt"
     exit 1
@@ -757,3 +787,163 @@ run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.9 --replace > "$LAN/out.txt" 2>
     exit 1
 }
 echo 'PASS: LAN setup leaves a domain configuration alone unless --replace is given'
+
+# Outside access: one external address beside the home Wi-Fi one. The setup names both in the
+# certificate and passes the external one to the gateway, and keeps it on later runs.
+also_count() { grep -c '^also ' "$LAN_LOG" || true; }
+before="$(configure_count)"
+run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.9 --external 203.0.113.5 > "$LAN/out.txt" 2>&1 || {
+    echo 'FAIL: LAN setup with an external address failed'
+    cat "$LAN/out.txt"
+    exit 1
+}
+[[ "$(configure_count)" == "$((before + 1))" ]] && [[ "$(tail -n 1 "$LAN_LOG")" == 'also https://203.0.113.5:8443' ]] &&
+    grep -q '^subjectAltName = IP:192.168.0.9, IP:203.0.113.5$' "$LAN_LOG" &&
+    grep -q '"https://203.0.113.5:8443"' "$LAN_DATA/gateway.json" &&
+    grep -q 'https://192.168.0.9:8443' "$LAN/out.txt" && grep -q '밖(휴대폰 데이터망)에서는 여세요: *https://203.0.113.5:8443' "$LAN/out.txt" &&
+    grep -q '공유기 포트포워딩: 이 Mac(192.168.0.9)으로' "$LAN/out.txt" && grep -q '웹: 외부 TCP 8443 → 이 Mac의 TCP 8443' "$LAN/out.txt" &&
+    ! grep -q 'https://공인IP' "$LAN/out.txt" || {
+    echo 'FAIL: an external address must be certified, allowed by the gateway and explained'
+    cat "$LAN_LOG" "$LAN/out.txt" "$LAN_DATA/gateway.json"
+    exit 1
+}
+echo 'PASS: LAN setup certifies and allows an external address beside the home address'
+
+before="$(configure_count)"
+run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.9 > "$LAN/out.txt" 2>&1 &&
+    [[ "$(configure_count)" == "$before" ]] && grep -q '이미 이 주소로 설정되어 있습니다' "$LAN/out.txt" &&
+    grep -q 'https://203.0.113.5:8443' "$LAN/out.txt" || {
+    echo 'FAIL: a run without options must keep the external address and ask nothing'
+    cat "$LAN_LOG" "$LAN/out.txt"
+    exit 1
+}
+run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.12 > "$LAN/out.txt" 2>&1 &&
+    [[ "$(configure_count)" == "$((before + 1))" ]] && [[ "$(tail -n 1 "$LAN_LOG")" == 'also https://203.0.113.5:8443' ]] &&
+    grep -q '^configure https://192.168.0.12:8443|' "$LAN_LOG" &&
+    grep -q '^subjectAltName = IP:192.168.0.12, IP:203.0.113.5$' "$LAN_LOG" || {
+    echo 'FAIL: a home address change must keep the external address'
+    cat "$LAN_LOG" "$LAN/out.txt"
+    exit 1
+}
+echo 'PASS: LAN setup keeps the external address across reruns and home address changes'
+
+before="$(configure_count)"
+run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.12 --external=HTTPS://Cam.Example.net:443/ > "$LAN/out.txt" 2>&1 &&
+    [[ "$(configure_count)" == "$((before + 1))" ]] && [[ "$(tail -n 1 "$LAN_LOG")" == 'also https://cam.example.net' ]] &&
+    grep -q '^subjectAltName = IP:192.168.0.12, DNS:cam.example.net$' "$LAN_LOG" &&
+    grep -q '밖에서 쓸 주소가 바뀝니다: https://203.0.113.5:8443 → https://cam.example.net' "$LAN/out.txt" &&
+    grep -q '웹: 외부 TCP 443 → ' "$LAN/out.txt" || {
+    echo 'FAIL: a DDNS name with port 443 must become https://cam.example.net with a DNS name in the certificate'
+    cat "$LAN_LOG" "$LAN/out.txt"
+    exit 1
+}
+echo 'PASS: LAN setup reads a DDNS name typed as a URL and certifies it by name'
+
+cp "$LAN_DATA/gateway.json" "$LAN/gateway-before.json"
+before="$(configure_count)"
+for bad in 'bad host!' 203.0.113.300 203.0.113.010 0xcb.0.113.10 cam.example.123 cam.example.net:70000 cam.example.net:0 localhost \
+    192.168.0.12 192.168.0.12:8443 192.168.0.1 10.0.0.1 172.20.1.1 127.0.0.1 169.254.1.1 0.1.2.3 224.0.0.1 \
+    2001:db8::1 '[2001:db8::1]:8443' 'https://cam.example.net/live' '-'; do
+    if run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.12 --external "$bad" > "$LAN/out.txt" 2>&1; then
+        echo "FAIL: LAN setup accepted the external address '$bad'"
+        cat "$LAN/out.txt"
+        exit 1
+    fi
+    [[ "$(configure_count)" == "$before" ]] && cmp -s "$LAN_DATA/gateway.json" "$LAN/gateway-before.json" || {
+        echo "FAIL: a refused external address '$bad' changed the configuration"
+        exit 1
+    }
+done
+if run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.12 --external > "$LAN/out.txt" 2>&1; then
+    echo 'FAIL: --external without an address was accepted'
+    exit 1
+fi
+echo 'PASS: LAN setup refuses unreadable external addresses and changes nothing'
+
+before="$(configure_count)"
+before_also="$(also_count)"
+run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.12 --no-external > "$LAN/out.txt" 2>&1 &&
+    [[ "$(configure_count)" == "$((before + 1))" && "$(also_count)" == "$before_also" ]] &&
+    ! grep -q additionalOrigins "$LAN_DATA/gateway.json" &&
+    grep -q '^subjectAltName = IP:192.168.0.12$' "$LAN_LOG" &&
+    grep -q '밖에서 쓸 주소가 바뀝니다: https://cam.example.net → 없음' "$LAN/out.txt" &&
+    ! grep -q '밖(휴대폰 데이터망)에서는' "$LAN/out.txt" || {
+    echo 'FAIL: --no-external must remove the external address'
+    cat "$LAN_LOG" "$LAN/out.txt"
+    exit 1
+}
+echo 'PASS: LAN setup removes the external address with --no-external'
+
+grep -q 'IPv6 주소는 지원하지 않습니다' <(run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.12 --external 2001:db8::1 2>&1 || true) &&
+    grep -q 'curl -4 -s https://ifconfig.me' <(run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.12 --external 192.168.0.1 2>&1 || true) || {
+    echo 'FAIL: an IPv6 or home address must be refused with a reason the owner can act on'
+    exit 1
+}
+run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.12 --external 100.70.1.2 > "$LAN/out.txt" 2>&1 &&
+    [[ "$(tail -n 1 "$LAN_LOG")" == 'also https://100.70.1.2:8443' ]] && grep -q 'CGNAT' "$LAN/out.txt" &&
+    grep -q '휴대폰과 Mac 모두 Tailscale을 켜 두면 됩니다' "$LAN/out.txt" && ! grep -q '2) 공유기 포트포워딩' "$LAN/out.txt" || {
+    echo 'FAIL: a 100.64/10 address must be accepted with a carrier-NAT warning'
+    cat "$LAN/out.txt"
+    exit 1
+}
+echo 'PASS: LAN setup explains refused IPv6 and home addresses and warns about carrier NAT'
+
+run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.12 > "$LAN/out.txt" 2>&1 && ! grep -q '밖에서 쓸 주소:' "$LAN/out.txt" || {
+    echo 'FAIL: the setup must not ask for an external address'
+    cat "$LAN/out.txt"
+    exit 1
+}
+echo 'PASS: LAN setup asks nothing about outside access'
+
+# Several external addresses written by hand survive a home address change, and a home
+# address listed among them is dropped instead of being certified as external.
+write_gateway() {
+    {
+        printf '{\n  "tlsCertificateFile": "%s",\n  "publicOrigin": "%s",\n' "$LAN/cert.pem" "$1"
+        shift
+        printf '  "additionalOrigins": [\n'
+        local index=0
+        for origin in "$@"; do
+            index=$((index + 1))
+            if [[ $index -lt $# ]]; then printf '    "%s",\n' "$origin"; else printf '    "%s"\n' "$origin"; fi
+        done
+        printf '  ]\n}\n'
+    } > "$LAN_DATA/gateway.json"
+}
+write_gateway https://192.168.0.12:8443 https://203.0.113.5:8443 https://cam.example.net https://192.168.0.7:8443
+before="$(configure_count)"
+before_also="$(also_count)"
+run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.20 > "$LAN/out.txt" 2>&1 &&
+    [[ "$(configure_count)" == "$((before + 1))" && "$(also_count)" == "$((before_also + 2))" ]] &&
+    [[ "$(tail -n 2 "$LAN_LOG" | tr '\n' ' ')" == 'also https://203.0.113.5:8443 also https://cam.example.net ' ]] &&
+    grep -q '^subjectAltName = IP:192.168.0.20, IP:203.0.113.5, DNS:cam.example.net$' "$LAN_LOG" &&
+    grep -q '집 안 주소 https://192.168.0.7:8443 는 밖에서 쓸 주소에서 뺍니다' "$LAN/out.txt" &&
+    grep -q '웹: 외부 TCP 8443 → ' "$LAN/out.txt" && grep -q '웹: 외부 TCP 443 → ' "$LAN/out.txt" || {
+    echo 'FAIL: a rerun must keep every external address and drop listed home addresses'
+    cat "$LAN_LOG" "$LAN/out.txt"
+    exit 1
+}
+echo 'PASS: LAN setup keeps every external address and drops home addresses listed among them'
+
+# Switching a domain configuration to the home address keeps the domain for outside use. A
+# home address listed with the domain (the documented --also-origin example) is dropped
+# instead of stopping the run as "the same as the home address".
+write_gateway https://cam.example.com:8443 https://192.168.0.20:8443
+before="$(configure_count)"
+run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.20 --replace > "$LAN/out.txt" 2>&1 &&
+    [[ "$(configure_count)" == "$((before + 1))" && "$(tail -n 1 "$LAN_LOG")" == 'also https://cam.example.com:8443' ]] &&
+    grep -q '^configure https://192.168.0.20:8443|' "$LAN_LOG" &&
+    grep -q '^subjectAltName = IP:192.168.0.20, DNS:cam.example.com$' "$LAN_LOG" &&
+    grep -q '도메인 주소 https://cam.example.com:8443 는 밖에서 쓸 주소로 남깁니다' "$LAN/out.txt" || {
+    echo 'FAIL: --replace must keep the replaced domain as an external address'
+    cat "$LAN_LOG" "$LAN/out.txt"
+    exit 1
+}
+write_gateway https://cam.example.com:8443 https://192.168.0.20:8443
+run_lan TEST_LAN_IFACE=en0 TEST_LAN_IP=192.168.0.20 --replace --no-external > "$LAN/out.txt" 2>&1 &&
+    ! grep -q additionalOrigins "$LAN_DATA/gateway.json" || {
+    echo 'FAIL: --replace --no-external must leave no external address'
+    cat "$LAN/out.txt"
+    exit 1
+}
+echo 'PASS: LAN setup keeps a replaced domain for outside use unless --no-external is given'

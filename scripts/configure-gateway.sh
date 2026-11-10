@@ -1,8 +1,20 @@
 #!/bin/bash
 set -euo pipefail
 
+# --also-origin adds another address of this gateway, for example the external one when the
+# main origin is the home Wi-Fi address. It may be given more than once.
+ALSO_ORIGIN_FLAGS=()
+while [[ $# -gt 0 && "$1" == --also-origin ]]; do
+    if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "--also-origin needs an https origin" >&2
+        exit 2
+    fi
+    ALSO_ORIGIN_FLAGS+=(-also-origin "$2")
+    shift 2
+done
+
 if [[ $# -lt 3 ]]; then
-    echo "usage: $0 <https-origin> <absolute-certificate-path> <absolute-private-key-path> [listen-address]" >&2
+    echo "usage: $0 [--also-origin <https-origin>]... <https-origin> <absolute-certificate-path> <absolute-private-key-path> [listen-address]" >&2
     exit 2
 fi
 
@@ -49,6 +61,7 @@ trap 'exit 143' TERM
 "$GATEWAY" init \
     -output "$CANDIDATE" \
     -origin "$PUBLIC_ORIGIN" \
+    ${ALSO_ORIGIN_FLAGS[@]+"${ALSO_ORIGIN_FLAGS[@]}"} \
     -listen "$LISTEN_ADDRESS" \
     -cert "$CERTIFICATE_PATH" \
     -key "$PRIVATE_KEY_PATH" \

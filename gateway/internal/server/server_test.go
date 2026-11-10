@@ -294,3 +294,112 @@ func TestMediaHTTPFailureIsNotReportedAsLiveAvailable(t *testing.T) {
 		t.Fatal("HTTP 503 must not launch the live player")
 	}
 }
+
+// The same-Wi-Fi setup stores the home address as publicOrigin. A phone outside reaches the
+// gateway at the external address, and its login was refused before the password was read.
+func TestLoginAcceptsEveryConfiguredOriginAndNothingElse(t *testing.T) {
+	hash, err := auth.HashPassword("correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(config.Config{
+		PublicOrigin:        "https://192.168.0.7:8443",
+		AdditionalOrigins:   []string{"https://203.0.113.5:8443", "https://Cam.Example.net:443"},
+		MediaMTXURL:         "http://127.0.0.1:8889",
+		RecordingsDirectory: t.TempDir(),
+		PasswordHash:        hash,
+		SessionIdleMinutes:  30,
+		SessionMaxHours:     24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	login := func(origin string) int {
+		request := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBufferString(`{"password":"correct horse battery staple"}`))
+		if origin != "" {
+			request.Header.Set("Origin", origin)
+		}
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		return response.Code
+	}
+	for _, origin := range []string{"https://192.168.0.7:8443", "https://203.0.113.5:8443", "https://cam.example.net"} {
+		if code := login(origin); code != http.StatusOK {
+			t.Fatalf("login from configured origin %s returned %d", origin, code)
+		}
+	}
+	for _, origin := range []string{"", "null", "https://evil.example", "https://203.0.113.5", "http://203.0.113.5:8443", "https://192.168.0.7:8443/"} {
+		if code := login(origin); code != http.StatusForbidden {
+			t.Fatalf("login from origin %q returned %d", origin, code)
+		}
+	}
+}
+
+func TestAnUnvalidatedEmptyOriginNeverAllowsARequestWithoutOrigin(t *testing.T) {
+	server, err := New(config.Config{MediaMTXURL: "http://127.0.0.1:8889", RecordingsDirectory: t.TempDir(),
+		SessionIdleMinutes: 30, SessionMaxHours: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBufferString(`{"password":"x"}`))
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("request without Origin returned %d", response.Code)
+	}
+}
+
+// A phone outside home opens the public IP or a DDNS name that nobody configured. The page it
+// loaded from that address sends that address as its origin, so the login is accepted.
+func TestLoginAcceptsTheAddressThePhoneOpenedWithoutConfiguringIt(t *testing.T) {
+	hash, err := auth.HashPassword("correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(config.Config{
+		PublicOrigin:        "https://192.168.0.7:8443",
+		MediaMTXURL:         "http://127.0.0.1:8889",
+		RecordingsDirectory: t.TempDir(),
+		PasswordHash:        hash,
+		SessionIdleMinutes:  30,
+		SessionMaxHours:     24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	login := func(host, origin string) int {
+		request := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBufferString(`{"password":"correct horse battery staple"}`))
+		request.Host = host
+		if origin != "" {
+			request.Header.Set("Origin", origin)
+		}
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		return response.Code
+	}
+	for _, accepted := range [][2]string{
+		{"203.0.113.5:8443", "https://203.0.113.5:8443"},
+		{"cam.example.net:8443", "https://cam.example.net:8443"},
+		{"Cam.Example.net:443", "https://cam.example.net"},
+		{"cam.example.net", "https://cam.example.net"},
+		{"203.0.113.5:8443", "https://192.168.0.7:8443"},
+	} {
+		if code := login(accepted[0], accepted[1]); code != http.StatusOK {
+			t.Fatalf("Host %s Origin %s returned %d", accepted[0], accepted[1], code)
+		}
+	}
+	for _, refused := range [][2]string{
+		{"203.0.113.5:8443", ""},
+		{"203.0.113.5:8443", "null"},
+		{"203.0.113.5:8443", "https://evil.example"},
+		{"203.0.113.5:8443", "https://203.0.113.5"},
+		{"203.0.113.5:8443", "http://203.0.113.5:8443"},
+		{"203.0.113.5:8443", "https://203.0.113.5:8443/"},
+		{"", "https://"},
+		{"evil@203.0.113.5:8443", "https://203.0.113.5:8443"},
+	} {
+		if code := login(refused[0], refused[1]); code != http.StatusForbidden {
+			t.Fatalf("Host %q Origin %q returned %d", refused[0], refused[1], code)
+		}
+	}
+}

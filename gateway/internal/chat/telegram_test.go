@@ -715,3 +715,14 @@ func TestClassifyKeepsDiagnoseApartFromOtherWords(t *testing.T) {
 		}
 	}
 }
+
+func TestDescribeOriginsLabelsTheHomeAndTheOutsideAddress(t *testing.T) {
+	if got := DescribeOrigins([]string{"https://192.168.0.7:8443"}); got != "https://192.168.0.7:8443" {
+		t.Fatalf("one origin: %s", got)
+	}
+	got := DescribeOrigins([]string{"https://192.168.0.7:8443", "https://203.0.113.5:8443", "https://imac.local:8443", "https://cam.example.net"})
+	want := "집 Wi-Fi https://192.168.0.7:8443 · 밖에서 https://203.0.113.5:8443 · 집 Wi-Fi https://imac.local:8443 · 밖에서 https://cam.example.net"
+	if got != want {
+		t.Fatalf("labels:\n got %s\nwant %s", got, want)
+	}
+}
