@@ -46,6 +46,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let checkWindowPreventer = IdleSleepPreventer(kind: .preventSystemSleep,
         reason: "MacMonitor 슬림 모드 확인 창: 깨어난 뒤 요청을 확인하는 동안 잠들지 않습니다.")
     private var wokeFromSleep = false
+    // Set when a wake was found from the clock gap with no wake notification, which is how a
+    // dark wake looks from here. A capture request in that state asks for a full wake.
+    private var darkWakeSuspected = false
+    private let fullWake = FullWakeRequester()
     private var remoteActivity: NSObjectProtocol?
     private var reportedStandbyPowerError = false
     // Slim mode: the Mac may sleep between requests and wakes itself on a schedule.
@@ -161,7 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         archiveAccess.start()
         let center = NSWorkspace.shared.notificationCenter
         center.addObserver(self, selector: #selector(willSleep), name: NSWorkspace.willSleepNotification, object: nil)
-        center.addObserver(self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
+        center.addObserver(self, selector: #selector(didFullWake), name: NSWorkspace.didWakeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(settingsChanged), name: .monitoringSettingsChanged, object: nil)
         do {
             let configuration = try AppConfiguration.loadOrCreate()
@@ -269,13 +273,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if slimMode.enabled && canScheduleWake { try? checkWindowPreventer.acquire() }
         sleepStartedAt = Date()
         systemSleeping = true
+        darkWakeSuspected = false
         archiveAccess.stop()
         // Uptime stops during sleep, so a lease must not look fresh again after waking.
         liveDemand.stop()
         reconcileMonitoring()
     }
 
-    @objc private func didWake() {
+    /// The notification is posted for full wakes only, so the camera can be used as it is.
+    @objc private func didFullWake() {
+        darkWakeSuspected = false
+        didWake()
+    }
+
+    private func didWake() {
         guard authenticated, !terminating else { return }
         systemSleeping = false
         let wokeOnSchedule = noteWake()
@@ -344,6 +355,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         if lastDesired != .off, desired == .off { captureEndedUptime = ProcessInfo.processInfo.systemUptime }
         lastDesired = desired
+        if desired != .off, darkWakeSuspected {
+            // One request per wake. The display lights for about a second: requirement 7
+            // gives way here by the owner's decision (2026-11-11), because the camera does
+            // not run in a dark wake. A display that sleeps while the Mac stays fully awake
+            // never takes this path.
+            darkWakeSuspected = false
+            NSLog("MacMonitor: capture requested in a dark wake; asking for a full wake")
+            if fullWake.request() { displaySleep.turnOffOnce(respectExistingInput: true) }
+        }
         if systemSleeping {
             healthReporter.setPauseReason(.systemSleep)
         } else if desired != .off {
@@ -539,6 +559,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSLog("MacMonitor: sleep detected from the clock gap")
         if systemSleeping {
             // willSleep ran but didWake never came; finish the wake ourselves.
+            darkWakeSuspected = true
             didWake()
         } else if noteWake() {
             displaySleep.turnOffOnce(respectExistingInput: true)
