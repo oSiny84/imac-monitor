@@ -49,8 +49,9 @@ final class AudioTimelineAlignerTests: XCTestCase {
         XCTAssertEqual(aligner.plan(incomingSamples: 8_000, videoFramesEmitted: 1), .init(padSamples: 0, keepSamples: 0))
         XCTAssertEqual(aligner.trimmedSamples, 8_000)
         XCTAssertEqual(aligner.samplesWritten, 3_200)
-        // Partially ahead: only the newest samples that reach the target are kept.
-        XCTAssertEqual(aligner.plan(incomingSamples: 8_000, videoFramesEmitted: 2), .init(padSamples: 0, keepSamples: 3_200))
+        // Partially ahead: 12,000 more would reach 15,200, past the second frame's 6,400 plus
+        // the tolerance, so only the newest samples that reach the target are kept.
+        XCTAssertEqual(aligner.plan(incomingSamples: 12_000, videoFramesEmitted: 2), .init(padSamples: 0, keepSamples: 3_200))
         XCTAssertEqual(aligner.samplesWritten, 6_400)
     }
 

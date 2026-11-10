@@ -19,13 +19,14 @@ public struct FFmpegCapabilities: Equatable {
 
     /// `ffmpeg -encoders` prints one encoder per line after a legend, e.g.
     /// ` A....D libopus              libopus Opus (codec opus)`. The name is the second field.
+    /// Legend lines such as ` V..... = Video` have `=` there and are skipped.
     public static func parseEncoders(_ output: String) -> Set<String> {
         var names = Set<String>()
         for line in output.split(whereSeparator: \.isNewline) {
             let fields = line.split(separator: " ", omittingEmptySubsequences: true)
             guard fields.count >= 2, fields[0].count == 6,
                   fields[0].first.map({ "VAS".contains($0) }) == true,
-                  fields[0] != "------" else { continue }
+                  fields[0] != "------", fields[1] != "=" else { continue }
             names.insert(String(fields[1]))
         }
         return names

@@ -50,17 +50,14 @@ final class AppConfigurationTests: XCTestCase {
     }
 
     func testNewSettingsSurviveRoundTrip() throws {
-        let original = AppConfiguration(preRollSeconds: 60, postRollSeconds: 120,
+        let original = AppConfiguration(
             sleepSchedule: DailySleepSchedule(enabled: true, sleepMinute: 23 * 60, wakeMinute: 6 * 60))
         let decoded = try JSONDecoder().decode(AppConfiguration.self, from: JSONEncoder().encode(original))
         XCTAssertEqual(decoded, original)
         try decoded.validate()
     }
 
-    func testRejectsInvalidWindowsAndIdenticalScheduleTimes() {
-        XCTAssertThrowsError(try AppConfiguration(preRollSeconds: -1).validate())
-        XCTAssertThrowsError(try AppConfiguration(postRollSeconds: 0).validate())
-        XCTAssertThrowsError(try AppConfiguration(postRollSeconds: 301).validate())
+    func testRejectsIdenticalAndOutOfRangeScheduleTimes() {
         XCTAssertThrowsError(try DailySleepSchedule(sleepMinute: 600, wakeMinute: 600).validate())
         XCTAssertThrowsError(try DailySleepSchedule(sleepMinute: 1440).validate())
     }
