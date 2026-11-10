@@ -422,9 +422,12 @@ public final class FFmpegPipeline {
             .path
         let audio = audioInput == nil ? nil : configuration.audio
         // Each tee output gets the video and its own audio encode: Opus is what WebRTC plays,
-        // AAC is what Safari plays from a file. The quotes protect the colon inside `v:0`.
-        let liveSelect = audio == nil ? "" : ":select='v:0,a:0'"
-        let fileSelect = audio == nil ? "" : ":select='v:0,a:1'"
+        // AAC is what Safari plays from a file. The streams are named by output index (0 video,
+        // 1 Opus, 2 AAC, in -map order) because tee splits its options at every colon, quotes
+        // or not: `select='v:0,a:0'` failed with "No option found near" in FFmpeg 7.1 and in
+        // the iMac's evermeet build (2026-11-10), which turned sound off.
+        let liveSelect = audio == nil ? "" : ":select=0,1"
+        let fileSelect = audio == nil ? "" : ":select=0,2"
         // A local publish failure must restart the pipeline; silently dropping
         // this slave would leave monitoring 'running' without any live video.
         var teeOutputs = ["[f=rtsp:rtsp_transport=tcp:onfail=abort\(liveSelect)]\(configuration.rtspPublishURL.absoluteString)"]

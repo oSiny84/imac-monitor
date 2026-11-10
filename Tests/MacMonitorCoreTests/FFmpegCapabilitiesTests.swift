@@ -30,8 +30,7 @@ final class FFmpegCapabilitiesTests: XCTestCase {
         XCTAssertTrue(joined.contains("-f s16le -ar 48000 -ac 1"), "the same raw audio input as the microphone")
         XCTAssertTrue(joined.contains("-c:a:0 libopus"))
         XCTAssertTrue(joined.contains("-c:a:1 aac"))
-        XCTAssertTrue(joined.contains("select='v:0,a:0'"))
-        XCTAssertTrue(joined.contains("select='v:0,a:1'"))
+        XCTAssertTrue(joined.contains("[f=null:select=0,1]-|[f=null:select=0,2]-"), "the same stream selection as the camera")
         XCTAssertEqual(arguments.filter { $0 == "/dev/zero" }.count, 2, "no lavfi dependency: both inputs read zeros")
         XCTAssertTrue(arguments.contains("0.2"), "short enough to run at every camera start")
     }

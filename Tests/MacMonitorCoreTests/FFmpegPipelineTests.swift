@@ -29,8 +29,12 @@ final class FFmpegPipelineTests: XCTestCase {
         XCTAssertTrue(joined.contains("-map 0:v:0 -map 1:a:0 -c:a:0 libopus -b:a:0 48k -map 1:a:0 -c:a:1 aac -b:a:1 64k"))
         XCTAssertFalse(arguments.contains("-an"))
         let target = try XCTUnwrap(arguments.last)
-        XCTAssertTrue(target.contains("onfail=abort:select='v:0,a:0']rtsp://"), "the live stream gets the Opus track")
-        XCTAssertTrue(target.contains("onfail=abort:select='v:0,a:1']/tmp/spool/segment-"), "the files get the AAC track")
+        XCTAssertTrue(target.contains("onfail=abort:select=0,1]rtsp://"), "the live stream gets the video and the Opus track")
+        XCTAssertTrue(target.contains("onfail=abort:select=0,2]/tmp/spool/segment-"), "the files get the video and the AAC track")
+        // tee splits slave options at every colon, so a stream specifier such as v:0 breaks the
+        // option list even inside quotes (FFmpeg 7.1 and the iMac's build, 2026-11-10).
+        XCTAssertFalse(target.contains("select='"), "no quoted specifiers in the tee")
+        XCTAssertFalse(target.contains("v:0"), "no colon inside a tee option value")
         XCTAssertTrue(joined.contains("-realtime:v true -allow_sw:v 1"), "encoder-private options are video-only now that audio encoders exist")
     }
 
@@ -40,7 +44,7 @@ final class FFmpegPipelineTests: XCTestCase {
         XCTAssertEqual(arguments.filter { $0 == "libopus" }.count, 1)
         let target = try XCTUnwrap(arguments.last)
         XCTAssertFalse(target.contains("|"))
-        XCTAssertTrue(target.contains("select='v:0,a:0'"))
+        XCTAssertTrue(target.contains("select=0,1]"))
     }
 
     func testWithoutAPipeTheCommandStaysSilentEvenWhenSoundIsConfigured() throws {

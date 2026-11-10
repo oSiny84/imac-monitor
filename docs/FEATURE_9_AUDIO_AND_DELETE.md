@@ -40,14 +40,16 @@
 -map 1:a:0 -c:a:0 libopus -b:a:0 48k        ← 실시간(WebRTC는 Opus만 재생)
 -map 1:a:0 -c:a:1 aac    -b:a:1 64k         ← 파일(Safari가 재생하는 AAC)
 -c:v h264_videotoolbox -realtime:v … (영상 옵션에 :v 지정)
--f tee "[f=rtsp:…:select='v:0,a:0']rtsp://…|[f=segment:…:select='v:0,a:1']Spool/…"
+-f tee "[f=rtsp:…:select=0,1]rtsp://…|[f=segment:…:select=0,2]Spool/…"
 ```
+
+`select`는 출력 스트림 번호(0 영상, 1 Opus, 2 AAC, `-map` 순서)로 고릅니다. 처음에는 `select='v:0,a:0'`처럼 썼는데, tee는 따옴표와 상관없이 `:`마다 옵션을 끊어 `No option found near "0,a:0]-"`로 실패했습니다. 2026-11-10 대상 iMac(evermeet 빌드)에서 이 때문에 소리 시험이 실패해 소리가 꺼졌고, Windows의 FFmpeg 7.1에서도 같은 오류를 재현했습니다. 번호로 바꾼 명령은 7.1에서 실시간 쪽에 영상+Opus, 파일 쪽에 영상+AAC만 들어가는 것을 ffprobe로 확인했습니다.
 
 기존 영상 전용 명령은 소리가 없을 때 그대로 유지되어(`-an`, `select` 없음) 지금까지 검증된 모양을 바꾸지 않습니다. 용량은 시간당 약 0.03GB가 늘어납니다.
 
 ### 2.4 FFmpeg 능력 확인과 fail-soft
 
-`FFmpegCapabilities`가 FFmpeg 하나당 한 번 `-encoders`를 읽어 `libopus`·`aac`를 확인하고, `/dev/zero`를 두 입력으로 삼아 0.2초짜리 시험 인코딩을 위 명령과 같은 모양으로 돌립니다. 둘 중 하나라도 실패하면 `LocalMonitoringPipeline`은 소리 없는 명령으로 카메라를 켜고 이유를 `MonitoringHealthReporter.setAudioEncoder(problem:)`로 보냅니다. Windows에서 실제 FFmpeg를 돌려 볼 수 없었으므로, 이 시험 인코딩이 Mac에서 명령 형식을 검증하는 첫 단계입니다. `diagnose.sh`도 같은 명령을 실행해 결과를 보여 줍니다.
+`FFmpegCapabilities`가 FFmpeg 하나당 한 번 `-encoders`를 읽어 `libopus`·`aac`를 확인하고, `/dev/zero`를 두 입력으로 삼아 0.2초짜리 시험 인코딩을 위 명령과 같은 모양으로 돌립니다. 둘 중 하나라도 실패하면 `LocalMonitoringPipeline`은 소리 없는 명령으로 카메라를 켜고 이유를 `MonitoringHealthReporter.setAudioEncoder(problem:)`로 보냅니다. 처음 작성할 때는 Windows에서 실제 FFmpeg를 돌려 보지 않았고, 이 시험 인코딩이 Mac에서 위 `select` 오류를 처음 드러냈습니다. `diagnose.sh`도 같은 명령을 실행해 결과를 보여 줍니다.
 
 ### 2.5 상태 표시
 

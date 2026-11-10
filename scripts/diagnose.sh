@@ -178,7 +178,7 @@ if [[ -n "$FFMPEG_PATH" ]]; then
             -f s16le -ar 48000 -ac 1 -i /dev/zero -t 0.2 \
             -map 0:v:0 -c:v h264_videotoolbox -realtime:v true -allow_sw:v 1 -b:v 300k \
             -map 1:a:0 -c:a:0 libopus -b:a:0 48k -map 1:a:0 -c:a:1 aac -b:a:1 64k \
-            -flags +global_header -f tee "[f=null:select='v:0,a:0']-|[f=null:select='v:0,a:1']-" >/dev/null 2>&1; then
+            -flags +global_header -f tee "[f=null:select=0,1]-|[f=null:select=0,2]-" >/dev/null 2>&1; then
             pass "FFmpeg encoded sound with Opus and AAC through the tee (the app's command shape)"
         else
             warn "FFmpeg rejected the app's sound command; the camera will run without sound (the app logs the reason)"

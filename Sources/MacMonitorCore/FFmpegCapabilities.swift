@@ -49,7 +49,7 @@ public struct FFmpegCapabilities: Equatable {
             "-map", "1:a:0", "-c:a:0", "libopus", "-b:a:0", "48k",
             "-map", "1:a:0", "-c:a:1", "aac", "-b:a:1", "64k",
             "-flags", "+global_header",
-            "-f", "tee", "[f=null:select='v:0,a:0']-|[f=null:select='v:0,a:1']-"
+            "-f", "tee", "[f=null:select=0,1]-|[f=null:select=0,2]-"
         ]
     }
 
