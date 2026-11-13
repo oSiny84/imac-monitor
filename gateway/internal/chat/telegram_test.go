@@ -666,6 +666,115 @@ func TestSleepFailureAndMissingSleeperAreReported(t *testing.T) {
 	}
 }
 
+func TestRecordingStartsForTheAskedHoursAndStops(t *testing.T) {
+	h := newHarness(t)
+	file := filepath.Join(t.TempDir(), "recording-demand.json")
+	h.bot.RecordingFile = file
+	poll := func(id int64, text string) string {
+		t.Helper()
+		h.queue(h.message(id, 42, text, h.clock.Now()))
+		if err := h.bot.Poll(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		texts := h.api.texts(42)
+		return texts[len(texts)-1]
+	}
+	// The harness clock starts at 10:00 UTC.
+	if reply := poll(1, "녹화"); !strings.Contains(reply, "2시간 · 12:00까지") {
+		t.Fatalf("default hours: %q", reply)
+	}
+	if demand := health.ReadRecordingDemand(file, h.clock.Now()); demand == nil || demand.Hours != 2 {
+		t.Fatalf("the request the app reads: %+v", demand)
+	}
+	if reply := poll(2, "녹화 20시간"); !strings.Contains(reply, "20시간 · 11월 9일 06:00까지") {
+		t.Fatalf("an end time on another day names the date: %q", reply)
+	}
+	for id, text := range map[int64]string{3: "녹화 0시간", 4: "녹화 25시간", 5: "녹화 99999999999999999999시간"} {
+		if reply := poll(id, text); !strings.Contains(reply, "1~24시간") {
+			t.Fatalf("%q: %q", text, reply)
+		}
+	}
+	if demand := health.ReadRecordingDemand(file, h.clock.Now()); demand == nil || demand.Hours != 20 {
+		t.Fatalf("a refused request must leave the running one alone: %+v", demand)
+	}
+	if reply := poll(6, "녹화 중지"); !strings.Contains(reply, "녹화를 끝냈습니다") {
+		t.Fatalf("stop: %q", reply)
+	}
+	if health.ReadRecordingDemand(file, h.clock.Now()) != nil {
+		t.Fatal("the request file survived the stop")
+	}
+	if reply := poll(7, "녹화 그만"); !strings.Contains(reply, "진행 중인 원격 녹화 요청이 없습니다") {
+		t.Fatalf("stop with nothing running: %q", reply)
+	}
+}
+
+func TestRecordingSentWhileTheMacSleptIsDroppedAndAMissingPathIsReported(t *testing.T) {
+	h := newHarness(t)
+	h.queue(h.message(1, 42, "녹화", h.clock.Now()), h.message(2, 42, "녹화 중지", h.clock.Now()))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "recording-demand.json")
+	h.bot.RecordingFile = file
+	h.queue(h.message(3, 42, "녹화 3시간", h.clock.Now().Add(-31*time.Minute)))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	texts := h.api.texts(42)
+	if len(texts) != 3 || !strings.Contains(texts[0], "원격 녹화 기능이 없습니다") || !strings.Contains(texts[1], "원격 녹화 기능이 없습니다") ||
+		!strings.Contains(texts[2], "31분 전에 보낸 녹화 요청이라 무시했습니다") {
+		t.Fatalf("unexpected replies: %v", texts)
+	}
+	if _, err := os.Stat(file); err == nil {
+		t.Fatal("a stale request started a recording")
+	}
+}
+
+func TestEndingTheViewingRequestSaysARecordingGoesOn(t *testing.T) {
+	h := newHarness(t)
+	h.bot.StartupTimeout = 0
+	h.bot.RecordingFile = filepath.Join(t.TempDir(), "recording-demand.json")
+	var seen time.Time
+	h.bot.ViewerSeen = func() time.Time { return seen }
+	now := h.clock.Now()
+	h.queue(h.message(1, 42, "녹화 3시간", now), h.message(2, 42, "카메라", now), h.message(3, 42, "그만", now))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	texts := h.api.texts(42)
+	last := texts[len(texts)-1]
+	if !strings.Contains(last, "카메라 요청을 끝냈습니다. 녹화는 13:00까지 계속되어 카메라는 켜져 있습니다") || strings.Contains(last, "20초") {
+		t.Fatalf("the stop reply must not promise the camera turns off: %q", last)
+	}
+
+	// The viewer leaves: the automatic message carries the same note.
+	h.queue(h.message(4, 42, "카메라", h.clock.Now()))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.clock.Advance(30 * time.Second)
+	seen = h.clock.Now()
+	h.clock.Advance(91 * time.Second)
+	if h.renews() {
+		t.Fatal("the window stayed open after the viewer left")
+	}
+	texts = h.api.texts(42)
+	last = texts[len(texts)-1]
+	if !strings.Contains(last, "웹 시청이 끝나") || !strings.Contains(last, "녹화는 13:00까지 계속되어") {
+		t.Fatalf("the viewer-left message: %q", last)
+	}
+
+	// Once the recording is stopped the plain reply is back.
+	h.queue(h.message(5, 42, "녹화 중지", h.clock.Now()), h.message(6, 42, "그만", h.clock.Now()))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	texts = h.api.texts(42)
+	if last = texts[len(texts)-1]; !strings.Contains(last, "약 20초 뒤 카메라가 꺼집니다") {
+		t.Fatalf("the plain stop reply: %q", last)
+	}
+}
+
 func TestSplitMessageKeepsLinesWhole(t *testing.T) {
 	parts := splitMessage("aaaa\nbbbb\ncc\n"+strings.Repeat("x", 11), 10)
 	expected := []string{"aaaa\nbbbb", "cc", "xxxxxxxxxx", "x"}
@@ -770,6 +879,9 @@ func TestClassifyKeepsDiagnoseApartFromOtherWords(t *testing.T) {
 		"진단": commandDiagnose, "카메라 진단": commandDiagnose, "diag": commandDiagnose,
 		"프로그램 꺼": commandStop, "프로그램 상태": commandStatus, "로그인": commandHelp, "카메라": commandStart,
 		"잠자기": commandSleep, "Mac 재워": commandSleep, "sleep": commandSleep, "잠자기 상태": commandStatus,
+		"녹화": commandRecordStart, "녹화 3시간": commandRecordStart, "녹화 켜": commandRecordStart, "record 2h": commandRecordStart,
+		"녹화 중지": commandRecordStop, "녹화 그만": commandRecordStop, "녹화 꺼": commandRecordStop, "record stop": commandRecordStop,
+		"녹화 상태": commandStatus, "그만": commandStop,
 	}
 	for text, expected := range cases {
 		if got := classify(text); got != expected {

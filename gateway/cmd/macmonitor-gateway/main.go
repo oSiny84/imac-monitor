@@ -85,6 +85,7 @@ func serve(arguments []string) {
 		bot.ViewerSeen = server.LastViewerDemand
 		bot.Diagnose = diag.New(diag.DefaultDir()).Report
 		bot.SleepMac = sleepMac
+		bot.RecordingFile = cfg.RecordingDemandFile
 		return bot
 	}, log.Printf)
 

@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,7 +29,7 @@ const DefaultAPIBase = "https://api.telegram.org"
 // ErrConflict is Telegram's 409: another process is long-polling the same bot token.
 var ErrConflict = errors.New("another process is already polling this bot token")
 
-const helpText = "명령: 카메라 (켜고 링크 받기) · 그만 (요청 끝내기) · 상태 (앱 상태 보기) · 진단 (잠자기·카메라 기록 보기) · 잠자기 (Mac 재우기)"
+const helpText = "명령: 카메라 (켜고 링크 받기) · 그만 (요청 끝내기) · 상태 (앱 상태 보기) · 진단 (잠자기·카메라 기록 보기) · 녹화 / 녹화 3시간 / 녹화 중지 (원격 녹화) · 잠자기 (Mac 재우기)"
 
 // Telegram refuses messages over 4096 characters; leave room for the part marker.
 const maxMessageRunes = 3900
@@ -51,6 +53,10 @@ type Bot struct {
 	ViewerSeen func() time.Time
 	// Collects the sleep/wake and camera diagnostics; nil when the gateway has none.
 	Diagnose func(context.Context) string
+	// The remote recording request file the web also writes; empty when the gateway has none.
+	RecordingFile string
+	// Hours recorded when the message names none.
+	RecordingHours int
 	// Puts the Mac to sleep; nil when the gateway cannot.
 	SleepMac func(context.Context) error
 	// The window closes this long after the last web viewer renewal, or this long after it
@@ -95,6 +101,8 @@ const (
 	commandStatus
 	commandDiagnose
 	commandSleep
+	commandRecordStart
+	commandRecordStop
 )
 
 type update struct {
@@ -138,6 +146,7 @@ func New(config Config, origin, demandFile, statusFile, stateFile string) *Bot {
 		StartupTimeout:  60 * time.Second,
 		StalenessLimit:  30 * time.Minute,
 		SleepStaleness:  2 * time.Minute,
+		RecordingHours:  2,
 		SleepDelay:      3 * time.Second,
 	}
 }
@@ -244,8 +253,16 @@ func (b *Bot) handle(ctx context.Context, item update) {
 				b.reply(ctx, "Mac을 재우지 못했습니다: "+err.Error())
 			}
 		})
+	case commandRecordStart:
+		b.startRecording(ctx, msg.Text, now, now.Sub(time.Unix(msg.Date, 0)))
+	case commandRecordStop:
+		b.stopRecording(ctx, now)
 	case commandStop:
 		b.setWindow(nil)
+		if note := b.recordingNote(now); note != "" {
+			b.reply(ctx, "카메라 요청을 끝냈습니다."+note)
+			return
+		}
 		b.reply(ctx, "카메라 요청을 끝냈습니다. 웹에서 보고 있는 사람이 없으면 약 20초 뒤 카메라가 꺼집니다.")
 	case commandStart:
 		// A Mac that was off for hours must not turn its camera on for a request from this morning.
@@ -290,6 +307,80 @@ func isHomeAddress(host string) bool {
 // classify reads intent from a few words so the owner need not remember exact commands.
 // Diagnose, status and stop are checked first: "카메라 진단" and "카메라 상태" ask, "카메라 꺼" ends.
 // Sleep comes before stop and start so that "Mac 꺼" style words never decide it.
+var recordingHoursPattern = regexp.MustCompile(`(\d+)\s*(시간|hours?|h)`)
+
+// startRecording writes the same request as the web's record button, so recording goes on
+// until its end time whether or not anyone watches.
+func (b *Bot) startRecording(ctx context.Context, text string, now time.Time, age time.Duration) {
+	if b.RecordingFile == "" {
+		b.reply(ctx, "이 게이트웨이에는 원격 녹화 기능이 없습니다.")
+		return
+	}
+	// A request that waited while the Mac slept must not start hours of recording on wake.
+	if age > b.StalenessLimit {
+		b.reply(ctx, fmt.Sprintf("%d분 전에 보낸 녹화 요청이라 무시했습니다. 지금 녹화하려면 다시 보내세요.", int(age.Minutes())))
+		return
+	}
+	hours := b.RecordingHours
+	if match := recordingHoursPattern.FindStringSubmatch(strings.ToLower(text)); match != nil {
+		// A number too long for an int is out of range as well.
+		parsed, err := strconv.Atoi(match[1])
+		if err != nil || parsed < 1 || parsed > health.MaxRecordingHours {
+			b.reply(ctx, fmt.Sprintf("녹화 시간은 1~%d시간이어야 합니다. 예: '녹화 3시간'", health.MaxRecordingHours))
+			return
+		}
+		hours = parsed
+	}
+	demand, err := health.WriteRecordingDemand(b.RecordingFile, now, hours)
+	if err != nil {
+		b.Logf("telegram: recording request failed: %v", err)
+		b.reply(ctx, "녹화 요청을 앱에 전달하지 못했습니다.")
+		return
+	}
+	b.Logf("telegram: recording requested for %d hours until %s", demand.Hours, demand.Until.Format(time.RFC3339))
+	b.reply(ctx, fmt.Sprintf("녹화를 시작합니다 · %d시간 · %s까지. 웹을 닫아도 계속됩니다. 끝내려면 '녹화 중지'라고 보내세요.",
+		demand.Hours, clockText(demand.Until, now)))
+}
+
+func (b *Bot) stopRecording(ctx context.Context, now time.Time) {
+	if b.RecordingFile == "" {
+		b.reply(ctx, "이 게이트웨이에는 원격 녹화 기능이 없습니다.")
+		return
+	}
+	active := health.ReadRecordingDemand(b.RecordingFile, now) != nil
+	if err := health.ClearRecordingDemand(b.RecordingFile); err != nil {
+		b.Logf("telegram: recording stop failed: %v", err)
+		b.reply(ctx, "녹화 요청을 지우지 못했습니다.")
+		return
+	}
+	if !active {
+		b.reply(ctx, "진행 중인 원격 녹화 요청이 없습니다.")
+		return
+	}
+	b.Logf("telegram: recording stopped")
+	b.reply(ctx, "녹화를 끝냈습니다. 지금까지 녹화한 파일은 웹의 녹화 목록에 남습니다.")
+}
+
+// recordingNote says that a remote recording outlives the viewing request, or nothing when
+// none is active. The camera stays on for the recording, so the caller must not promise that
+// it turns off.
+func (b *Bot) recordingNote(now time.Time) string {
+	demand := health.ReadRecordingDemand(b.RecordingFile, now)
+	if demand == nil {
+		return ""
+	}
+	return fmt.Sprintf(" 녹화는 %s까지 계속되어 카메라는 켜져 있습니다. 녹화를 끝내려면 '녹화 중지'라고 보내세요.", clockText(demand.Until, now))
+}
+
+// clockText writes an end time in the clock's zone, with the date only when it is another day.
+func clockText(at, now time.Time) string {
+	local := at.In(now.Location())
+	if local.YearDay() == now.YearDay() && local.Year() == now.Year() {
+		return local.Format("15:04")
+	}
+	return fmt.Sprintf("%d월 %d일 %s", int(local.Month()), local.Day(), local.Format("15:04"))
+}
+
 func classify(text string) command {
 	lowered := strings.ToLower(strings.TrimSpace(text))
 	has := func(words ...string) bool {
@@ -305,6 +396,12 @@ func classify(text string) command {
 		return commandDiagnose
 	case has("상태", "status"):
 		return commandStatus
+	case has("녹화", "record"):
+		// Checked before the camera words: "녹화 중지" must end the recording, not the viewing.
+		if has("그만", "꺼", "중지", "stop", "off", "끝") {
+			return commandRecordStop
+		}
+		return commandRecordStart
 	case has("잠자", "재워", "재우", "sleep"):
 		return commandSleep
 	case has("그만", "꺼", "중지", "stop", "off", "끝"):
@@ -558,13 +655,13 @@ func (b *Bot) renewOnce(now time.Time) {
 		if viewerCame && now.Sub(seen) > b.ViewerGone {
 			b.setWindow(nil)
 			b.Logf("telegram: viewing request ended, the web viewer left")
-			b.reply(context.Background(), "웹 시청이 끝나 카메라 요청을 끝냈습니다. 다시 보려면 '카메라'라고 보내세요.")
+			b.reply(context.Background(), "웹 시청이 끝나 카메라 요청을 끝냈습니다. 다시 보려면 '카메라'라고 보내세요."+b.recordingNote(now))
 			return
 		}
 		if !viewerCame && now.Sub(*started) > b.NoViewerTimeout {
 			b.setWindow(nil)
 			b.Logf("telegram: viewing request ended, nobody opened the link")
-			b.reply(context.Background(), fmt.Sprintf("%d분 동안 아무도 열지 않아 카메라 요청을 끝냈습니다. 다시 보려면 '카메라'라고 보내세요.", int(b.NoViewerTimeout.Minutes())))
+			b.reply(context.Background(), fmt.Sprintf("%d분 동안 아무도 열지 않아 카메라 요청을 끝냈습니다. 다시 보려면 '카메라'라고 보내세요.", int(b.NoViewerTimeout.Minutes()))+b.recordingNote(now))
 			return
 		}
 	}
