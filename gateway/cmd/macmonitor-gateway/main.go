@@ -85,6 +85,8 @@ func serve(arguments []string) {
 		bot.ViewerSeen = server.LastViewerDemand
 		bot.Diagnose = diag.New(diag.DefaultDir()).Report
 		bot.SleepMac = sleepMac
+		bot.WakeMac = wakeMac
+		bot.DisplayOff = displayOff
 		bot.RecordingFile = cfg.RecordingDemandFile
 		return bot
 	}, log.Printf)
@@ -287,6 +289,24 @@ func usage() {
 }
 
 // sleepMac asks macOS to sleep now, the same request the Apple menu makes. It needs no root.
+// wakeMac declares user activity, which turns a dark wake into a full wake as the app's
+// FullWakeRequester does. It lights the display; the caller turns it off.
+func wakeMac(ctx context.Context) error {
+	output, err := exec.CommandContext(ctx, "/usr/bin/caffeinate", "-u", "-t", "2").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("caffeinate -u: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func displayOff(ctx context.Context) error {
+	output, err := exec.CommandContext(ctx, "/usr/bin/pmset", "displaysleepnow").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("pmset displaysleepnow: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
 func sleepMac(ctx context.Context) error {
 	output, err := exec.CommandContext(ctx, "/usr/bin/pmset", "sleepnow").CombinedOutput()
 	if err != nil {

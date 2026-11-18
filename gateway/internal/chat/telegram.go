@@ -29,7 +29,18 @@ const DefaultAPIBase = "https://api.telegram.org"
 // ErrConflict is Telegram's 409: another process is long-polling the same bot token.
 var ErrConflict = errors.New("another process is already polling this bot token")
 
-const helpText = "명령: 카메라 (켜고 링크 받기) · 그만 (요청 끝내기) · 상태 (앱 상태 보기) · 진단 (잠자기·카메라 기록 보기) · 녹화 / 녹화 3시간 / 녹화 중지 (원격 녹화) · 잠자기 (Mac 재우기)"
+// helpText answers "도움말", "help" and any message that is not a command.
+const helpText = `명령어 (띄어쓰기는 상관없습니다)
+· 카메라 — 카메라를 켜고 웹 링크를 받습니다. 10분 동안 유지합니다.
+· 그만 — 카메라 요청을 끝냅니다.
+· 상태 — 앱 상태를 봅니다.
+· 진단 — 잠자기·깨어남 기록과 카메라 상태를 봅니다.
+· 녹화 / 녹화 3시간 — 원격 녹화를 시작합니다(기본 2시간, 1~24시간). 웹을 닫아도 계속됩니다.
+· 녹화 중지 — 원격 녹화를 끝냅니다.
+· 화면 끄기 — Mac은 깨어 있는 채 화면만 끕니다.
+· 대기 — 잠든 Mac을 깨워 화면을 끈 채 둡니다. 잠든 동안 보내 두면 다음에 깨어날 때 처리합니다.
+· 잠자기 — Mac을 재웁니다. 잠든 동안에는 답하지 못합니다.
+· 도움말 — 이 목록을 다시 봅니다.`
 
 // Telegram refuses messages over 4096 characters; leave room for the part marker.
 const maxMessageRunes = 3900
@@ -57,6 +68,13 @@ type Bot struct {
 	RecordingFile string
 	// Hours recorded when the message names none.
 	RecordingHours int
+	// Wakes the Mac fully, as a key press would, so the app's idle sleep prevention holds it
+	// up; nil when the gateway cannot.
+	WakeMac func(context.Context) error
+	// Turns the display off and leaves the Mac awake; nil when the gateway cannot.
+	DisplayOff func(context.Context) error
+	// Time between the wake and the display turning off, so the wake completes first.
+	WakeSettle time.Duration
 	// Puts the Mac to sleep; nil when the gateway cannot.
 	SleepMac func(context.Context) error
 	// The window closes this long after the last web viewer renewal, or this long after it
@@ -102,6 +120,8 @@ const (
 	commandDiagnose
 	commandSleep
 	commandRecordStart
+	commandDisplayOff
+	commandStandby
 	commandRecordStop
 )
 
@@ -147,6 +167,7 @@ func New(config Config, origin, demandFile, statusFile, stateFile string) *Bot {
 		StalenessLimit:  30 * time.Minute,
 		SleepStaleness:  2 * time.Minute,
 		RecordingHours:  2,
+		WakeSettle:      2 * time.Second,
 		SleepDelay:      3 * time.Second,
 	}
 }
@@ -253,6 +274,43 @@ func (b *Bot) handle(ctx context.Context, item update) {
 				b.reply(ctx, "Mac을 재우지 못했습니다: "+err.Error())
 			}
 		})
+	case commandStandby:
+		// No age limit on purpose: the owner sends this ahead while the Mac sleeps, and the wake
+		// that finally delivers it is the moment to keep the Mac up.
+		if b.WakeMac == nil || b.DisplayOff == nil {
+			b.reply(ctx, "이 게이트웨이에는 대기 기능이 없습니다.")
+			return
+		}
+		// Wake first: in a dark wake the Mac goes back to sleep within a minute.
+		if err := b.WakeMac(ctx); err != nil {
+			b.Logf("telegram: wake request failed: %v", err)
+			b.reply(ctx, "Mac을 깨우지 못했습니다: "+err.Error())
+			return
+		}
+		b.Sleep(ctx, b.WakeSettle)
+		if err := b.DisplayOff(ctx); err != nil {
+			b.Logf("telegram: display off failed: %v", err)
+			b.reply(ctx, "Mac은 깨웠지만 화면을 끄지 못했습니다: "+err.Error())
+			return
+		}
+		b.Logf("telegram: standby requested; woke the Mac and turned the display off")
+		b.reply(ctx, "대기 상태로 두었습니다 · Mac은 깨어 있고 화면은 껐습니다. 이제 명령에 바로 답합니다. 다시 재우려면 '잠자기'라고 보내세요.")
+	case commandDisplayOff:
+		if b.DisplayOff == nil {
+			b.reply(ctx, "이 게이트웨이에는 화면 끄기 기능이 없습니다.")
+			return
+		}
+		// A request that waited while the Mac slept has nothing left to do.
+		if age := now.Sub(time.Unix(msg.Date, 0)); age > b.StalenessLimit {
+			b.reply(ctx, fmt.Sprintf("%d분 전에 보낸 화면 끄기 요청이라 무시했습니다. 잠든 Mac을 깨워 두려면 '대기'라고 보내세요.", int(age.Minutes())))
+			return
+		}
+		if err := b.DisplayOff(ctx); err != nil {
+			b.Logf("telegram: display off failed: %v", err)
+			b.reply(ctx, "화면을 끄지 못했습니다: "+err.Error())
+			return
+		}
+		b.reply(ctx, "화면을 껐습니다 · Mac은 깨어 있어 명령에 바로 답합니다.")
 	case commandRecordStart:
 		b.startRecording(ctx, msg.Text, now, now.Sub(time.Unix(msg.Date, 0)))
 	case commandRecordStop:
@@ -392,8 +450,16 @@ func classify(text string) command {
 		return false
 	}
 	switch {
+	case has("도움", "help", "명령어", "사용법") || lowered == "?" || lowered == "/start":
+		return commandHelp
 	case has("진단", "diag"):
 		return commandDiagnose
+	// Before the status and stop words: "대기 상태로" asks for standby and "화면 꺼" must not
+	// end the viewing request.
+	case has("화면", "display", "screen") && has("꺼", "끄", "off"):
+		return commandDisplayOff
+	case has("대기", "standby", "깨워", "깨우"):
+		return commandStandby
 	case has("상태", "status"):
 		return commandStatus
 	case has("녹화", "record"):

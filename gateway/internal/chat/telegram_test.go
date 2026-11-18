@@ -775,6 +775,81 @@ func TestEndingTheViewingRequestSaysARecordingGoesOn(t *testing.T) {
 	}
 }
 
+func TestStandbySentWhileTheMacSleptWakesItAndTurnsTheDisplayOff(t *testing.T) {
+	h := newHarness(t)
+	var calls []string
+	h.bot.WakeMac = func(context.Context) error {
+		calls = append(calls, "wake@"+h.clock.Now().Format("15:04:05"))
+		return nil
+	}
+	h.bot.DisplayOff = func(context.Context) error {
+		calls = append(calls, "off@"+h.clock.Now().Format("15:04:05"))
+		return nil
+	}
+	// Sent three hours ahead, while the Mac slept: still carried out.
+	h.queue(h.message(1, 42, "대기모드로 전환", h.clock.Now().Add(-3*time.Hour)))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(calls, ",") != "wake@10:00:00,off@10:00:02" {
+		t.Fatalf("wake, then the display off after the settle time: %v", calls)
+	}
+	if texts := h.api.texts(42); len(texts) != 1 || !strings.Contains(texts[0], "대기 상태로 두었습니다") {
+		t.Fatalf("unexpected replies: %v", texts)
+	}
+}
+
+func TestStandbyFailuresAreReported(t *testing.T) {
+	h := newHarness(t)
+	h.queue(h.message(1, 42, "대기", h.clock.Now()))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	offCalls := 0
+	h.bot.WakeMac = func(context.Context) error { return errors.New("caffeinate -u: exit status 1") }
+	h.bot.DisplayOff = func(context.Context) error { offCalls++; return nil }
+	h.queue(h.message(2, 42, "대기", h.clock.Now()))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.bot.WakeMac = func(context.Context) error { return nil }
+	h.bot.DisplayOff = func(context.Context) error { return errors.New("pmset displaysleepnow: exit status 1") }
+	h.queue(h.message(3, 42, "대기", h.clock.Now()))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	texts := h.api.texts(42)
+	if len(texts) != 3 || !strings.Contains(texts[0], "대기 기능이 없습니다") || !strings.Contains(texts[1], "깨우지 못했습니다") ||
+		!strings.Contains(texts[2], "화면을 끄지 못했습니다") {
+		t.Fatalf("unexpected replies: %v", texts)
+	}
+	if offCalls != 0 {
+		t.Fatal("the display was turned off although the wake failed")
+	}
+}
+
+func TestDisplayOffTurnsTheDisplayOffAndDropsOldRequests(t *testing.T) {
+	h := newHarness(t)
+	h.queue(h.message(1, 42, "화면 끄기", h.clock.Now()))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	h.bot.DisplayOff = func(context.Context) error { calls++; return nil }
+	h.queue(h.message(2, 42, "화면 꺼", h.clock.Now()), h.message(3, 42, "화면 끄기", h.clock.Now().Add(-31*time.Minute)))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("display off calls: %d", calls)
+	}
+	texts := h.api.texts(42)
+	if len(texts) != 3 || !strings.Contains(texts[0], "화면 끄기 기능이 없습니다") || !strings.Contains(texts[1], "화면을 껐습니다") ||
+		!strings.Contains(texts[2], "31분 전에 보낸 화면 끄기 요청이라 무시했습니다") {
+		t.Fatalf("unexpected replies: %v", texts)
+	}
+}
+
 func TestSplitMessageKeepsLinesWhole(t *testing.T) {
 	parts := splitMessage("aaaa\nbbbb\ncc\n"+strings.Repeat("x", 11), 10)
 	expected := []string{"aaaa\nbbbb", "cc", "xxxxxxxxxx", "x"}
@@ -882,6 +957,10 @@ func TestClassifyKeepsDiagnoseApartFromOtherWords(t *testing.T) {
 		"녹화": commandRecordStart, "녹화 3시간": commandRecordStart, "녹화 켜": commandRecordStart, "record 2h": commandRecordStart,
 		"녹화 중지": commandRecordStop, "녹화 그만": commandRecordStop, "녹화 꺼": commandRecordStop, "record stop": commandRecordStop,
 		"녹화 상태": commandStatus, "그만": commandStop,
+		"화면 끄기": commandDisplayOff, "화면 꺼": commandDisplayOff, "화면꺼줘": commandDisplayOff, "screen off": commandDisplayOff,
+		"대기": commandStandby, "대기모드로 전환": commandStandby, "대기 상태로": commandStandby, "깨워": commandStandby,
+		"화면 상태": commandStatus, "화면": commandHelp,
+		"도움말": commandHelp, "help": commandHelp, "명령어": commandHelp, "카메라 사용법": commandHelp, "?": commandHelp, "/start": commandHelp,
 	}
 	for text, expected := range cases {
 		if got := classify(text); got != expected {
