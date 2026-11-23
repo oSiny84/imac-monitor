@@ -40,6 +40,8 @@ const helpText = `명령어 (띄어쓰기는 상관없습니다)
 · 화면 끄기 — Mac은 깨어 있는 채 화면만 끕니다.
 · 대기 — 잠든 Mac을 깨워 화면을 끈 채 둡니다. 잠든 동안 보내 두면 다음에 깨어날 때 처리합니다.
 · 잠자기 — Mac을 재웁니다. 잠든 동안에는 답하지 못합니다.
+· 말 밥 먹었어? — Mac이 글을 소리 내어 읽습니다(최대 300자).
+· 볼륨 70 — 읽을 때의 Mac 음량을 정합니다(1~100). 숫자 없이 보내면 지금 값을 알려 줍니다.
 · 도움말 — 이 목록을 다시 봅니다.`
 
 // Telegram refuses messages over 4096 characters; leave room for the part marker.
@@ -75,6 +77,8 @@ type Bot struct {
 	DisplayOff func(context.Context) error
 	// Time between the wake and the display turning off, so the wake completes first.
 	WakeSettle time.Duration
+	// Reads text aloud on the Mac at an output volume of 1 to 100; nil when the gateway cannot.
+	Speak func(ctx context.Context, text string, volume int) error
 	// Puts the Mac to sleep; nil when the gateway cannot.
 	SleepMac func(context.Context) error
 	// The window closes this long after the last web viewer renewal, or this long after it
@@ -108,6 +112,8 @@ type state struct {
 	// A 진단 request whose report was not fully sent: the app stops the gateway before every
 	// sleep, so a report cut off by sleep is sent again after the next start.
 	PendingDiagnose *time.Time `json:"pendingDiagnose,omitempty"`
+	// The output volume for 말, 1 to 100; zero means the default.
+	SpeakVolume int `json:"speakVolume,omitempty"`
 }
 
 type command int
@@ -121,6 +127,8 @@ const (
 	commandSleep
 	commandRecordStart
 	commandDisplayOff
+	commandSay
+	commandVolume
 	commandStandby
 	commandRecordStop
 )
@@ -274,6 +282,10 @@ func (b *Bot) handle(ctx context.Context, item update) {
 				b.reply(ctx, "Mac을 재우지 못했습니다: "+err.Error())
 			}
 		})
+	case commandSay:
+		b.say(ctx, msg.Text, now.Sub(time.Unix(msg.Date, 0)))
+	case commandVolume:
+		b.setSpeakVolume(ctx, msg.Text)
 	case commandStandby:
 		// No age limit on purpose: the owner sends this ahead while the Mac sleeps, and the wake
 		// that finally delivers it is the moment to keep the Mac up.
@@ -439,8 +451,93 @@ func clockText(at, now time.Time) string {
 	return fmt.Sprintf("%d월 %d일 %s", int(local.Month()), local.Day(), local.Format("15:04"))
 }
 
+const defaultSpeakVolume = 60
+
+var spokenPrefixes = []string{"말해줘", "말해", "말", "say"}
+
+// spokenText returns what to read aloud when the message starts with 말 or say. The prefix
+// must stand alone ("말 …", "말: …"), so words such as 말씀 are not commands.
+func spokenText(text string) (string, bool) {
+	trimmed := strings.TrimSpace(text)
+	lowered := strings.ToLower(trimmed)
+	for _, prefix := range spokenPrefixes {
+		if !strings.HasPrefix(lowered, prefix) {
+			continue
+		}
+		rest := trimmed[len(prefix):]
+		if rest != "" && !strings.HasPrefix(rest, " ") && !strings.HasPrefix(rest, ":") && !strings.HasPrefix(rest, "\n") {
+			return "", false
+		}
+		return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rest), ":")), true
+	}
+	return "", false
+}
+
+var volumePattern = regexp.MustCompile(`^(볼륨|음량|volume)\s*(\d*)\s*$`)
+
+func (b *Bot) speakVolume() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.state.SpeakVolume >= 1 && b.state.SpeakVolume <= 100 {
+		return b.state.SpeakVolume
+	}
+	return defaultSpeakVolume
+}
+
+func (b *Bot) say(ctx context.Context, text string, age time.Duration) {
+	if b.Speak == nil {
+		b.reply(ctx, "이 게이트웨이에는 말하기 기능이 없습니다.")
+		return
+	}
+	spoken, _ := spokenText(text)
+	if spoken == "" {
+		b.reply(ctx, "읽을 글을 함께 보내세요. 예: '말 밥 먹었어?'")
+		return
+	}
+	// A message that waited while the Mac slept would be read aloud hours late, and a dark
+	// wake has no sound anyway.
+	if age > b.SleepStaleness {
+		b.reply(ctx, fmt.Sprintf("%d분 전에 보낸 말하기 요청이라 읽지 않았습니다. Mac이 자고 있었을 수 있습니다. 지금 들려주려면 다시 보내세요.", int(age.Minutes())))
+		return
+	}
+	volume := b.speakVolume()
+	b.Background(func() {
+		if err := b.Speak(ctx, spoken, volume); err != nil {
+			b.Logf("telegram: speaking failed: %v", err)
+			b.reply(ctx, "Mac에서 읽지 못했습니다: "+err.Error())
+			return
+		}
+		b.reply(ctx, fmt.Sprintf("Mac에서 읽었습니다 · 음량 %d", volume))
+	})
+}
+
+func (b *Bot) setSpeakVolume(ctx context.Context, text string) {
+	match := volumePattern.FindStringSubmatch(strings.ToLower(strings.TrimSpace(text)))
+	if match == nil || match[2] == "" {
+		b.reply(ctx, fmt.Sprintf("말하기 음량: %d. 바꾸려면 '볼륨 70'처럼 보내세요(1~100).", b.speakVolume()))
+		return
+	}
+	volume, err := strconv.Atoi(match[2])
+	if err != nil || volume < 1 || volume > 100 {
+		b.reply(ctx, "음량은 1~100이어야 합니다. 예: '볼륨 70'")
+		return
+	}
+	b.mu.Lock()
+	b.state.SpeakVolume = volume
+	b.persistLocked()
+	b.mu.Unlock()
+	b.reply(ctx, fmt.Sprintf("말하기 음량을 %d로 정했습니다. 읽는 동안만 Mac 음량을 이 값으로 바꿨다가 되돌립니다. 웹의 누르고 말하기 음량은 웹 화면의 막대로 따로 정합니다.", volume))
+}
+
 func classify(text string) command {
+	// Before every other word: the text to read may say 카메라 or 꺼.
+	if _, ok := spokenText(text); ok {
+		return commandSay
+	}
 	lowered := strings.ToLower(strings.TrimSpace(text))
+	if volumePattern.MatchString(lowered) {
+		return commandVolume
+	}
 	has := func(words ...string) bool {
 		for _, word := range words {
 			if strings.Contains(lowered, word) {

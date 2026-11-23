@@ -31,6 +31,8 @@ HTTPS 게이트웨이는 인증된 앱 세션에 속하며 촬영 중지·화면
 
 ## 미디어와 녹화
 
+누르고 말하기(`POST /api/talk`)는 로그인과 CSRF 토큰이 필요하고, 음성 형식(`audio/*`)만 2 MB까지 받아 Mac 스피커로 재생합니다. 받은 파일은 재생 뒤 지웁니다. 브라우저 마이크는 메인 화면에만 `Permissions-Policy: microphone=(self)`로 허용하고 실시간 영상 프레임(`/live/`)에는 허용하지 않습니다. 텔레그램 `말`은 허용한 채팅만 쓸 수 있고, 글은 `say`의 표준 입력으로 넘겨 명령 옵션으로 해석되지 않습니다.
+
 - 브라우저와 게이트웨이: HTTPS.
 - WebRTC 미디어: DTLS/SRTP.
 - 카메라 게시: 동일 Mac의 loopback RTSP/TCP.

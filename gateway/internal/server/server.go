@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -24,6 +26,7 @@ import (
 	"macmonitor.local/gateway/internal/config"
 	"macmonitor.local/gateway/internal/health"
 	"macmonitor.local/gateway/internal/recordings"
+	"macmonitor.local/gateway/internal/speaker"
 )
 
 const sessionCookieName = "__Host-mm_session"
@@ -45,7 +48,17 @@ type Server struct {
 	allowedOrigins map[string]bool
 	// Unix nanoseconds of the last live-lease renewal by a web viewer; read by the chat bot.
 	lastViewerDemand atomic.Int64
+	// Plays push-to-talk clips on the Mac; nil when the gateway has no player.
+	talker Talker
 }
+
+// Talker plays a recorded clip on the Mac's speakers at an output volume of 1 to 100.
+type Talker interface {
+	PlayClip(ctx context.Context, data []byte, volume int) error
+}
+
+// SetTalker enables push-to-talk. Call it before serving.
+func (s *Server) SetTalker(talker Talker) { s.talker = talker }
 
 // LastViewerDemand is when a logged-in web viewer last asked for the camera, or zero.
 func (s *Server) LastViewerDemand() time.Time {
@@ -152,6 +165,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/live/demand", s.requireSession(http.HandlerFunc(s.recordLiveDemand)))
 	mux.Handle("POST /api/recording/start", s.requireSession(http.HandlerFunc(s.startRecording)))
 	mux.Handle("POST /api/recording/stop", s.requireSession(http.HandlerFunc(s.stopRecording)))
+	mux.Handle("POST /api/talk", s.requireSession(http.HandlerFunc(s.talk)))
 	mux.Handle("GET /api/recordings", s.requireSession(http.HandlerFunc(s.listRecordings)))
 	mux.Handle("GET /api/recordings/{id}/thumbnail", s.requireSession(http.HandlerFunc(s.serveThumbnail)))
 	mux.Handle("PUT /api/recordings/{id}/protection", s.requireSession(http.HandlerFunc(s.setRecordingProtection)))
@@ -311,6 +325,55 @@ func (s *Server) startRecording(writer http.ResponseWriter, request *http.Reques
 	}
 	log.Printf("remote recording requested for %d hours until %s", demand.Hours, demand.Until.Format(time.RFC3339))
 	writeJSON(writer, http.StatusOK, demand)
+}
+
+// talk plays a clip the owner recorded on the web page through the Mac's speakers. It answers
+// once playback has ended, so the page can say it was heard.
+func (s *Server) talk(writer http.ResponseWriter, request *http.Request) {
+	_, session, _ := s.requestSession(request)
+	if !csrfMatches(request, session.CSRF) {
+		writeError(writer, http.StatusForbidden, "CSRF 검증에 실패했습니다.")
+		return
+	}
+	if s.talker == nil {
+		writeError(writer, http.StatusServiceUnavailable, "이 게이트웨이에는 말하기 기능이 없습니다.")
+		return
+	}
+	// Chrome labels its Opus recordings video/webm in some versions.
+	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil || !(strings.HasPrefix(mediaType, "audio/") || mediaType == "video/webm" || mediaType == "video/mp4") {
+		writeError(writer, http.StatusUnsupportedMediaType, "음성 녹음 형식이 아닙니다.")
+		return
+	}
+	volume, err := strconv.Atoi(request.URL.Query().Get("volume"))
+	if err != nil || !speaker.ValidVolume(volume) {
+		writeError(writer, http.StatusBadRequest, "음량은 1~100이어야 합니다.")
+		return
+	}
+	data, err := io.ReadAll(http.MaxBytesReader(writer, request.Body, speaker.MaxClipBytes))
+	if err != nil {
+		writeError(writer, http.StatusRequestEntityTooLarge, fmt.Sprintf("녹음이 너무 깁니다 (최대 %d초).", speaker.MaxClipSeconds))
+		return
+	}
+	if len(data) == 0 {
+		writeError(writer, http.StatusBadRequest, "녹음이 비어 있습니다.")
+		return
+	}
+	// Playback goes on if the phone drops the connection; the clip is short and bounded.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(request.Context()), 2*time.Minute)
+	defer cancel()
+	switch err := s.talker.PlayClip(ctx, data, volume); {
+	case errors.Is(err, speaker.ErrBusy):
+		writeError(writer, http.StatusConflict, err.Error()+".")
+	case errors.Is(err, speaker.ErrNoFFmpeg):
+		writeError(writer, http.StatusServiceUnavailable, err.Error()+".")
+	case err != nil:
+		log.Printf("talkback failed: %v", err)
+		writeError(writer, http.StatusInternalServerError, "Mac에서 재생하지 못했습니다.")
+	default:
+		log.Printf("talkback played (%d bytes, volume %d)", len(data), volume)
+		writeJSON(writer, http.StatusOK, map[string]bool{"played": true})
+	}
 }
 
 // stopRecording ends the request early. The app notices the missing file within seconds.
@@ -481,7 +544,13 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		writer.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		writer.Header().Set("X-Content-Type-Options", "nosniff")
 		writer.Header().Set("Referrer-Policy", "no-referrer")
-		writer.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		// The page itself may use the phone's microphone for push-to-talk; the live player
+		// frame never needs it.
+		if strings.HasPrefix(request.URL.Path, "/live/") {
+			writer.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		} else {
+			writer.Header().Set("Permissions-Policy", "camera=(), microphone=(self), geolocation=()")
+		}
 		writer.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 		writer.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		writer.Header().Set("Cache-Control", "no-store")

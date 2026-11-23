@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -850,6 +851,65 @@ func TestDisplayOffTurnsTheDisplayOffAndDropsOldRequests(t *testing.T) {
 	}
 }
 
+func TestSayReadsTheTextAtTheChosenVolume(t *testing.T) {
+	h := newHarness(t)
+	var spoken []string
+	h.bot.Speak = func(_ context.Context, text string, volume int) error {
+		spoken = append(spoken, fmt.Sprintf("%s@%d", text, volume))
+		return nil
+	}
+	h.queue(h.message(1, 42, "말 카메라 좀 꺼 줘", h.clock.Now()), h.message(2, 42, "볼륨 85", h.clock.Now()),
+		h.message(3, 42, "말해:  밥 먹었어? ", h.clock.Now()), h.message(4, 42, "볼륨", h.clock.Now()))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(spoken, "|") != "카메라 좀 꺼 줘@60|밥 먹었어?@85" {
+		t.Fatalf("spoken: %v", spoken)
+	}
+	texts := h.api.texts(42)
+	if len(texts) != 4 || !strings.Contains(texts[0], "음량 60") || !strings.Contains(texts[1], "85로 정했습니다") ||
+		!strings.Contains(texts[2], "음량 85") || !strings.Contains(texts[3], "말하기 음량: 85") {
+		t.Fatalf("unexpected replies: %v", texts)
+	}
+	// The volume survives a gateway restart.
+	restarted := New(Config{}, "", h.demandFile, h.statusFile, h.stateFile)
+	if volume := func() int { restarted.load(); return restarted.speakVolume() }(); volume != 85 {
+		t.Fatalf("volume after restart: %d", volume)
+	}
+}
+
+func TestSayRefusesWhatItShouldNotRead(t *testing.T) {
+	h := newHarness(t)
+	h.queue(h.message(1, 42, "말 안녕", h.clock.Now()))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	h.bot.Speak = func(context.Context, string, int) error {
+		calls++
+		return errors.New("다른 음성을 재생하고 있습니다")
+	}
+	h.queue(h.message(2, 42, "말", h.clock.Now()), h.message(3, 42, "말 늦은 말", h.clock.Now().Add(-3*time.Minute)),
+		h.message(4, 42, "볼륨 0", h.clock.Now()), h.message(5, 42, "볼륨 101", h.clock.Now()), h.message(6, 42, "말 지금", h.clock.Now()))
+	if err := h.bot.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("speak calls: %d", calls)
+	}
+	texts := h.api.texts(42)
+	expected := []string{"말하기 기능이 없습니다", "읽을 글을 함께 보내세요", "3분 전에 보낸 말하기 요청이라 읽지 않았습니다",
+		"음량은 1~100이어야 합니다", "음량은 1~100이어야 합니다", "Mac에서 읽지 못했습니다: 다른 음성을 재생하고 있습니다"}
+	if len(texts) != len(expected) {
+		t.Fatalf("unexpected replies: %v", texts)
+	}
+	for i, want := range expected {
+		if !strings.Contains(texts[i], want) {
+			t.Fatalf("reply %d: %q, want %q", i, texts[i], want)
+		}
+	}
+}
+
 func TestSplitMessageKeepsLinesWhole(t *testing.T) {
 	parts := splitMessage("aaaa\nbbbb\ncc\n"+strings.Repeat("x", 11), 10)
 	expected := []string{"aaaa\nbbbb", "cc", "xxxxxxxxxx", "x"}
@@ -960,6 +1020,9 @@ func TestClassifyKeepsDiagnoseApartFromOtherWords(t *testing.T) {
 		"화면 끄기": commandDisplayOff, "화면 꺼": commandDisplayOff, "화면꺼줘": commandDisplayOff, "screen off": commandDisplayOff,
 		"대기": commandStandby, "대기모드로 전환": commandStandby, "대기 상태로": commandStandby, "깨워": commandStandby,
 		"화면 상태": commandStatus, "화면": commandHelp,
+		"말 안녕": commandSay, "말해 카메라 꺼": commandSay, "말: 밥 먹어": commandSay, "Say hello": commandSay, "말": commandSay,
+		"말씀": commandHelp, "말해봐요": commandHelp, "볼륨": commandVolume, "볼륨 70": commandVolume, "음량70": commandVolume,
+		"volume 5": commandVolume, "볼륨 올려": commandHelp,
 		"도움말": commandHelp, "help": commandHelp, "명령어": commandHelp, "카메라 사용법": commandHelp, "?": commandHelp, "/start": commandHelp,
 	}
 	for text, expected := range cases {

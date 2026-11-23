@@ -146,7 +146,7 @@ func TestThumbnailRealFFmpegWithSeekableDescriptor(t *testing.T) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		t.Skip("descriptor integration requires macOS/Linux")
 	}
-	executable := locateFFmpeg()
+	executable := LocateFFmpeg()
 	if executable == "" {
 		t.Skip("FFmpeg not installed")
 	}

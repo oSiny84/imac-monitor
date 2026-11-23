@@ -23,7 +23,9 @@ import (
 	"macmonitor.local/gateway/internal/chat"
 	"macmonitor.local/gateway/internal/config"
 	"macmonitor.local/gateway/internal/diag"
+	"macmonitor.local/gateway/internal/recordings"
 	webserver "macmonitor.local/gateway/internal/server"
+	"macmonitor.local/gateway/internal/speaker"
 )
 
 var passwordInput = bufio.NewReader(io.LimitReader(os.Stdin, 4098))
@@ -62,6 +64,9 @@ func serve(arguments []string) {
 	if err != nil {
 		log.Fatalf("server initialization error: %v", err)
 	}
+	// One player for the web page and the bot, so two sounds never play over each other.
+	player := speaker.New(recordings.LocateFFmpeg(), log.Printf)
+	server.SetTalker(player)
 
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddress,
@@ -88,6 +93,7 @@ func serve(arguments []string) {
 		bot.WakeMac = wakeMac
 		bot.DisplayOff = displayOff
 		bot.RecordingFile = cfg.RecordingDemandFile
+		bot.Speak = player.Say
 		return bot
 	}, log.Printf)
 

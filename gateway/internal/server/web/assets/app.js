@@ -30,6 +30,10 @@
   const recordStart = document.querySelector("#record-start");
   const recordStop = document.querySelector("#record-stop");
   const recordState = document.querySelector("#record-state");
+  const talkButton = document.querySelector("#talk-button");
+  const talkVolume = document.querySelector("#talk-volume");
+  const talkVolumeValue = document.querySelector("#talk-volume-value");
+  const talkState = document.querySelector("#talk-state");
   try { const saved = localStorage.getItem("macmonitor-live-quality"); if (["auto", "original", "balanced", "low"].includes(saved)) liveQuality.value = saved; } catch { /* Private browsing may disable storage. */ }
   document.querySelector("#recording-timezone").textContent = `날짜·시각 기준: 접속 기기 (${Intl.DateTimeFormat().resolvedOptions().timeZone}). 녹화 시작 시각으로 검색합니다.`;
 
@@ -499,6 +503,118 @@
     if (state.csrfToken && state.view === "live") refreshStatus();
   });
   document.querySelector("#refresh-recordings").addEventListener("click", () => { state.recordingOffset = 0; refreshRecordings(); });
+
+  // Push-to-talk: record while the button is held, send on release, and the Mac plays it.
+  const talk = { stream: null, recorder: null, chunks: [], startedAt: 0, timer: 0, holding: false, sending: false };
+  try {
+    const saved = Number(localStorage.getItem("macmonitor-talk-volume"));
+    if (Number.isInteger(saved) && saved >= 1 && saved <= 100) talkVolume.value = String(saved);
+  } catch { /* Private browsing may disable storage. */ }
+  talkVolumeValue.textContent = talkVolume.value;
+  talkVolume.addEventListener("input", () => {
+    talkVolumeValue.textContent = talkVolume.value;
+    try { localStorage.setItem("macmonitor-talk-volume", talkVolume.value); } catch { /* The value still applies on this page. */ }
+  });
+
+  // iOS Safari records AAC in MP4; Chrome and Firefox record Opus in WebM or Ogg.
+  function talkMimeType() {
+    if (typeof MediaRecorder === "undefined") return null;
+    for (const type of ["audio/webm;codecs=opus", "audio/mp4", "audio/webm", "audio/ogg;codecs=opus"]) {
+      if (MediaRecorder.isTypeSupported?.(type)) return type;
+    }
+    return "";
+  }
+
+  function talkUnavailable() {
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) return "이 연결에서는 브라우저가 마이크를 막습니다. 인증서 경고 없이 열리는 HTTPS 주소에서만 됩니다.";
+    if (talkMimeType() === null) return "이 브라우저는 녹음을 지원하지 않습니다.";
+    return "";
+  }
+
+  function releaseTalkStream() {
+    for (const track of talk.stream?.getTracks() || []) track.stop();
+    talk.stream = null;
+  }
+
+  async function startTalk(event) {
+    event.preventDefault();
+    if (talk.holding || talk.sending || talk.recorder) return;
+    const reason = talkUnavailable();
+    if (reason) { talkState.textContent = reason; return; }
+    talk.holding = true;
+    try { talkButton.setPointerCapture(event.pointerId); } catch { /* Release is still caught by pointerup. */ }
+    talkState.textContent = "마이크 준비 중";
+    try {
+      talk.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    } catch (error) {
+      talk.holding = false;
+      talkState.textContent = error?.name === "NotAllowedError" ? "마이크가 거부되었습니다. 브라우저 설정에서 이 사이트의 마이크를 허용하세요." : `마이크를 쓸 수 없습니다 · ${error?.message || error}`;
+      return;
+    }
+    // Released while the permission prompt was open: nothing was said yet.
+    if (!talk.holding) {
+      releaseTalkStream();
+      talkState.textContent = "마이크를 허용했습니다. 다시 누른 채로 말하세요.";
+      return;
+    }
+    const type = talkMimeType();
+    talk.chunks = [];
+    try {
+      talk.recorder = type ? new MediaRecorder(talk.stream, { mimeType: type }) : new MediaRecorder(talk.stream);
+    } catch (error) {
+      talk.holding = false;
+      releaseTalkStream();
+      talkState.textContent = `녹음을 시작하지 못했습니다 · ${error?.message || error}`;
+      return;
+    }
+    talk.recorder.addEventListener("dataavailable", (chunk) => { if (chunk.data.size) talk.chunks.push(chunk.data); });
+    talk.recorder.addEventListener("stop", sendTalk, { once: true });
+    talk.recorder.start();
+    talk.startedAt = performance.now();
+    talkButton.classList.add("recording");
+    talkState.textContent = "녹음 중 · 떼면 Mac으로 보냅니다";
+    talk.timer = setTimeout(stopTalk, 60000);
+  }
+
+  function stopTalk() {
+    talk.holding = false;
+    clearTimeout(talk.timer);
+    talkButton.classList.remove("recording");
+    if (talk.recorder && talk.recorder.state !== "inactive") talk.recorder.stop();
+  }
+
+  async function sendTalk() {
+    const recorder = talk.recorder;
+    const chunks = talk.chunks;
+    talk.recorder = null;
+    talk.chunks = [];
+    releaseTalkStream();
+    const seconds = (performance.now() - talk.startedAt) / 1000;
+    const type = recorder?.mimeType || chunks[0]?.type || "audio/webm";
+    const clip = new Blob(chunks, { type });
+    if (seconds < 0.5 || clip.size === 0) {
+      talkState.textContent = "너무 짧습니다. 버튼을 누른 채로 말하세요.";
+      return;
+    }
+    talk.sending = true;
+    talkButton.disabled = true;
+    talkState.textContent = "Mac으로 보내는 중";
+    try {
+      await request(`/api/talk?volume=${encodeURIComponent(talkVolume.value)}`, { method: "POST", body: clip, headers: { "Content-Type": type } });
+      talkState.textContent = `Mac에서 재생했습니다 · ${Math.max(1, Math.round(seconds))}초`;
+    } catch (error) {
+      talkState.textContent = `재생 실패 · ${error.message}`;
+    } finally {
+      talk.sending = false;
+      talkButton.disabled = false;
+    }
+  }
+
+  talkButton.addEventListener("pointerdown", startTalk);
+  for (const name of ["pointerup", "pointercancel", "lostpointercapture"]) {
+    talkButton.addEventListener(name, () => { if (talk.holding) stopTalk(); });
+  }
+  talkButton.addEventListener("contextmenu", (event) => event.preventDefault());
 
   for (const tab of document.querySelectorAll(".tab")) {
     tab.addEventListener("click", () => {

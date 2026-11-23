@@ -36,7 +36,7 @@ type Thumbnails struct {
 }
 
 func NewThumbnails(store *Store) *Thumbnails {
-	executable := locateFFmpeg()
+	executable := LocateFFmpeg()
 	return &Thumbnails{store: store, gate: make(chan struct{}, 1), cache: make(map[string]thumbnailEntry),
 		render: func(ctx context.Context, file *os.File) ([]byte, error) { return renderJPEG(ctx, executable, file) }}
 }
@@ -103,7 +103,8 @@ func (t *Thumbnails) Get(ctx context.Context, id string) ([]byte, error) {
 	return data, nil
 }
 
-func locateFFmpeg() string {
+// LocateFFmpeg finds the FFmpeg next to the gateway or in the usual Homebrew places.
+func LocateFFmpeg() string {
 	candidates := []string{"/usr/local/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg"}
 	if executable, err := os.Executable(); err == nil {
 		candidates = append([]string{filepath.Join(filepath.Dir(executable), "ffmpeg")}, candidates...)

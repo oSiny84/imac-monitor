@@ -56,6 +56,12 @@
           <span id="record-state" class="archive-hint" role="status" aria-live="polite"></span>
         </div>
         <p class="archive-hint">녹화 시작을 누르면 이 화면을 닫아도 고른 시간까지 10분 단위 파일로 계속 저장합니다. 시작할 때 영상이 잠시 끊기고 다시 연결됩니다. 최대 녹화 용량을 넘으면 오래된 파일부터 지워집니다.</p>
+        <div class="talk-controls" aria-label="누르고 말하기">
+          <button id="talk-button" class="talk-button" type="button">누르고 말하기</button>
+          <span class="talk-volume"><label for="talk-volume">Mac 음량</label><input id="talk-volume" type="range" min="1" max="100" step="1" value="60"><output id="talk-volume-value" for="talk-volume">60</output></span>
+          <span id="talk-state" class="archive-hint" role="status" aria-live="polite"></span>
+        </div>
+        <p class="archive-hint">누르고 있는 동안 휴대폰 마이크로 녹음하고, 떼면 Mac 스피커로 재생합니다(최대 1분). 재생하는 동안만 Mac 음량을 이 값으로 바꾸고 음소거를 풀었다가 되돌립니다. Mac 마이크가 재생된 소리도 받아 영상과 녹화에 들어갑니다.</p>
         <p class="archive-hint">이 화면을 보는 동안 카메라가 켜지고 Mac의 초록 표시등이 들어옵니다. 화면을 닫으면 약 20초 뒤 꺼집니다. 원격 녹화 중에는 계속 켜져 있습니다.</p>
       </section>
 
