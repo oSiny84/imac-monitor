@@ -33,6 +33,7 @@
       <nav class="tabs" aria-label="화면 선택">
         <button class="tab active" data-view="live" type="button">실시간</button>
         <button class="tab" data-view="recordings" type="button">녹화</button>
+        <button class="tab" data-view="debug" type="button">진단</button>
         <button id="logout" class="quiet" type="button">로그아웃</button>
       </nav>
 
@@ -62,7 +63,7 @@
           <span id="talk-state" class="archive-hint" role="status" aria-live="polite"></span>
         </div>
         <p class="archive-hint">누르고 있는 동안 휴대폰 마이크로 녹음하고, 떼면 Mac 스피커로 재생합니다(최대 1분). 재생하는 동안만 Mac 음량을 이 값으로 바꾸고 음소거를 풀었다가 되돌립니다. Mac 마이크가 재생된 소리도 받아 영상과 녹화에 들어갑니다.</p>
-        <p class="archive-hint">이 화면을 보는 동안 카메라가 켜지고 Mac의 초록 표시등이 들어옵니다. 화면을 닫으면 약 20초 뒤 꺼집니다. 원격 녹화 중에는 계속 켜져 있습니다.</p>
+        <p class="archive-hint">이 화면을 여는 동안 카메라가 켜지고 Mac의 초록 표시등이 들어옵니다. 창을 최소화하거나 다른 탭·진단 탭으로 옮겨도 연결을 유지합니다. 이 탭을 닫거나 녹화 탭으로 옮기면 약 20초 뒤 꺼집니다. 원격 녹화 중에는 계속 켜져 있습니다.</p>
       </section>
 
       <section id="recordings-view" class="view" hidden>
@@ -93,6 +94,20 @@
           <span id="recording-page"></span>
           <button id="next-recordings" class="secondary" type="button" disabled>다음</button>
         </nav>
+      </section>
+
+      <section id="debug-view" class="view" hidden>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">DEBUG</p>
+            <h2>진단</h2>
+          </div>
+        </div>
+        <p class="archive-hint">Mac에서 정해 둔 확인 명령만 실행합니다. 읽기만 하고 아무것도 바꾸지 않습니다. 앱 로그는 오래 걸릴 수 있습니다(최대 1분 30초).</p>
+        <div id="debug-checks" class="debug-checks"></div>
+        <p id="debug-state" class="archive-hint" role="status" aria-live="polite"></p>
+        <p id="debug-command" class="debug-command" hidden></p>
+        <pre id="debug-output" class="debug-output" hidden></pre>
       </section>
 
       <section class="monitoring-panel" aria-label="카메라 상태">

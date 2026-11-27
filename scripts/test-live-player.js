@@ -273,17 +273,24 @@ test("BFCache lifecycle releases resources and restores only after one fresh aut
   assert.equal(f.intervals.size, 1);
 });
 
-test("a hidden BFCache restore waits for visibility before authentication and reconnect", async () => {
+test("a hidden page keeps its connection, and a hidden BFCache restore reconnects at once", async () => {
   const f = fixture("auto", { auto: true });
   await flush();
-  f.visibility(true);
+  f.visibility(true); await flush();
+  assert.equal(f.peers[0].closed, undefined, "minimizing the window must not drop the video");
+  assert.equal(f.intervals.size, 1);
   f.event("pagehide", { persisted: true });
   const count = f.requests.length;
   f.event("pageshow", { persisted: true }); await flush();
-  assert.equal(f.requests.length, count);
-  f.visibility(false); await flush();
   assert.equal(f.requests[count].url, "/api/session");
   assert.equal(f.peers.length, 2);
+});
+
+test("a page that starts hidden connects anyway", async () => {
+  const f = fixture("auto", { auto: true, hidden: true });
+  await flush();
+  assert.equal(f.peers.length, 1);
+  assert.equal(f.peers[0].closed, undefined);
 });
 
 test("BFCache restore with an expired session does not create another peer or SDP request", async () => {

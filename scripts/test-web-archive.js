@@ -25,7 +25,10 @@ class Element {
   removeAttribute(name) { delete this[name]; }
   replaceChildren(...children) { this.children = children; }
   append(child) { this.children.push(child); }
-  querySelectorAll(selector) { return selector === "video" ? this.children.map((card) => card.video) : selector === "img" ? this.children.map((card) => card.image) : []; }
+  querySelectorAll(selector) {
+    if (selector === "button") return this.children;
+    return selector === "video" ? this.children.map((card) => card.video) : selector === "img" ? this.children.map((card) => card.image) : [];
+  }
   pause() { this.paused = true; }
   load() {}
 }
@@ -40,7 +43,9 @@ async function fixture(mediaOnline, options = {}) {
     "recording-from", "recording-to", "recording-filter", "clear-recording-filter", "recording-results", "recording-timezone",
     "previous-recordings", "next-recordings", "recording-page", "protected-only", "protection-summary",
     "protection-warning", "protection-message", "retention-warning", "live-quality", "live-waiting", "recording-mode",
-    "record-hours", "record-start", "record-stop", "record-state", "audio-state", "slim-state"];
+    "record-hours", "record-start", "record-stop", "record-state", "audio-state", "slim-state",
+    "talk-button", "talk-volume", "talk-volume-value", "talk-state",
+    "debug-view", "debug-checks", "debug-state", "debug-command", "debug-output"];
   const elements = Object.fromEntries(ids.map((id) => [id, new Element()]));
   elements["recording-template"].content = { firstElementChild: { cloneNode() {
     const card = new Element();
@@ -51,19 +56,20 @@ async function fixture(mediaOnline, options = {}) {
     card.querySelector = (selector) => selector === "video" ? card.video : fields[selector];
     return card;
   } } };
-  const tabs = ["live", "recordings"].map((view) => Object.assign(new Element(), { dataset: { view } }));
+  const tabs = ["live", "recordings", "debug"].map((view) => Object.assign(new Element(), { dataset: { view } }));
   const visibilityListeners = [];
   const document = {
     hidden: false,
     querySelector: (selector) => elements[selector.slice(1)],
     querySelectorAll: () => tabs,
+    createElement: () => new Element(),
     addEventListener(name, callback) { if (name === "visibilitychange") visibilityListeners.push(callback); },
   };
   const api = { mediaOnline, blocked: false, release: null, interval: null, monitoring: options.monitoring ?? null,
     demands: [], failDemand: false, timeout: null, now: 1000,
     recording: null, recordingUntil: "2026-11-08T13:00:00Z", recordingStarts: [], recordingStops: [], failRecording: false,
     confirmUnprotect: true, protectionRequests: [], blockProtection: false, finishProtection: null, failProtection: false,
-    deleteRequests: [], failDelete: false,
+    deleteRequests: [], failDelete: false, checkRuns: [], failCheck: false,
     recordingRequests: [], blockRecordings: false, pendingRecordings: [], recordings: [
       { id: "example.mp4", startedAt: "2026-10-20T03:00:00Z", sizeBytes: 1024, url: "/recordings/example.mp4",
         protected: false, protectionSupported: true, protectionAvailable: true,
@@ -119,6 +125,16 @@ async function fixture(mediaOnline, options = {}) {
       };
       if (api.blockProtection) return new Promise((resolve) => { api.finishProtection = () => resolve(finish()); });
       return finish();
+    }
+    if (url === "/api/diag/checks") {
+      return response({ available: true, checks: [
+        { id: "power-log", title: "잠자기·깨어남", command: "pmset -g log | grep" },
+        { id: "idle", title: "마지막 입력", command: "ioreg -c IOHIDSystem" }] });
+    }
+    if (url.startsWith("/api/diag/run?")) {
+      api.checkRuns.push({ url, options });
+      if (api.failCheck) return response({ error: "다른 진단이 실행 중입니다." }, 409);
+      return response({ id: "power-log", output: "2026-11-26 18:41:05 Display is turned on", ranAt: "2026-11-26T09:41:10Z", seconds: 1.25 });
     }
     if (url === "/api/status") {
       if (api.blocked) return new Promise((resolve) => { api.release = () => resolve(response({ mediaReachable: api.mediaOnline, monitoring: api.monitoring, recording: api.recording })); });
@@ -610,7 +626,7 @@ test("while the camera starts the page rechecks quickly, and a dead camera is re
   assert.equal(elements["monitor-detail"].textContent, "오류 — 카메라 권한이 필요합니다.");
 });
 
-test("only a visible live view renews the camera lease", async () => {
+test("the camera lease is renewed in the background and on the debug tab, not on recordings", async () => {
   const { api, tick, tab, visibility, elements } = await fixture(false, { monitoring: standby() });
   assert.equal(api.demands.length, 1);
   await tick();
@@ -622,14 +638,47 @@ test("only a visible live view renews the camera lease", async () => {
   await tab("live");
   assert.equal(api.demands.length, 3);
   await visibility(true);
+  const demandsWhenHidden = api.demands.length;
   await tick();
-  assert.equal(api.demands.length, 3, "a background tab must let the camera turn off");
+  assert.equal(api.demands.length, demandsWhenHidden + 1, "a minimized window keeps the camera on");
   await visibility(false);
-  assert.equal(api.demands.length, 4, "returning to the page asks for the camera again");
+  await tab("debug");
+  const demandsOnDebug = api.demands.length;
+  await tick();
+  assert.equal(api.demands.length, demandsOnDebug + 1, "the debug tab keeps the camera on");
   await elements.logout.listeners.click();
   await flush();
+  const demandsAtLogout = api.demands.length;
   await tick();
-  assert.equal(api.demands.length, 4, "logout must stop renewing");
+  assert.equal(api.demands.length, demandsAtLogout, "logout must stop renewing");
+});
+
+test("the debug tab lists the gateway's checks and runs one by ID with CSRF", async () => {
+  const { api, tab, elements } = await fixture(false, { monitoring: standby() });
+  await tab("debug");
+  assert.equal(elements["debug-view"].hidden, false);
+  assert.equal(elements["live-view"].hidden, true);
+  const buttons = elements["debug-checks"].children;
+  assert.deepEqual(buttons.map((button) => button.textContent), ["잠자기·깨어남", "마지막 입력"]);
+  await buttons[0].listeners.click();
+  await flush();
+  assert.equal(api.checkRuns.length, 1);
+  assert.equal(api.checkRuns[0].url, "/api/diag/run?id=power-log");
+  assert.equal(api.checkRuns[0].options.method, "POST");
+  assert.ok(api.checkRuns[0].options.headers.get("X-CSRF-Token"));
+  assert.equal(elements["debug-command"].textContent, "pmset -g log | grep");
+  assert.equal(elements["debug-output"].hidden, false);
+  assert.match(elements["debug-output"].textContent, /Display is turned on/);
+  assert.match(elements["debug-state"].textContent, /1\.3초 걸림/);
+  assert.equal(buttons[0].disabled, false);
+  api.failCheck = true;
+  await buttons[1].listeners.click();
+  await flush();
+  assert.equal(elements["debug-output"].hidden, true);
+  assert.match(elements["debug-state"].textContent, /마지막 입력: 다른 진단이 실행 중입니다/);
+  await tab("live");
+  await tab("debug");
+  assert.equal(elements["debug-checks"].children.length, 2, "the list loads once");
 });
 
 test("a failed demand does not break the page, and standby off keeps the old archive fallback", async () => {

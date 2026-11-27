@@ -24,6 +24,7 @@ import (
 
 	"macmonitor.local/gateway/internal/auth"
 	"macmonitor.local/gateway/internal/config"
+	"macmonitor.local/gateway/internal/diag"
 	"macmonitor.local/gateway/internal/health"
 	"macmonitor.local/gateway/internal/recordings"
 	"macmonitor.local/gateway/internal/speaker"
@@ -50,7 +51,21 @@ type Server struct {
 	lastViewerDemand atomic.Int64
 	// Plays push-to-talk clips on the Mac; nil when the gateway has no player.
 	talker Talker
+	// Runs the debug page's fixed diagnostics; nil when the gateway has none.
+	diagnostics Diagnostics
+	// One diagnostic at a time: some read hours of system log.
+	diagnosing atomic.Bool
 }
+
+// Diagnostics runs the fixed, read-only checks the debug page lists. Nothing in the request
+// reaches a command line: the page only names a check by its ID.
+type Diagnostics interface {
+	Checks() []diag.Check
+	RunCheck(ctx context.Context, id string) (string, error)
+}
+
+// SetDiagnostics enables the debug page. Call it before serving.
+func (s *Server) SetDiagnostics(diagnostics Diagnostics) { s.diagnostics = diagnostics }
 
 // Talker plays a recorded clip on the Mac's speakers at an output volume of 1 to 100.
 type Talker interface {
@@ -166,6 +181,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/recording/start", s.requireSession(http.HandlerFunc(s.startRecording)))
 	mux.Handle("POST /api/recording/stop", s.requireSession(http.HandlerFunc(s.stopRecording)))
 	mux.Handle("POST /api/talk", s.requireSession(http.HandlerFunc(s.talk)))
+	mux.Handle("GET /api/diag/checks", s.requireSession(http.HandlerFunc(s.listChecks)))
+	mux.Handle("POST /api/diag/run", s.requireSession(http.HandlerFunc(s.runCheck)))
 	mux.Handle("GET /api/recordings", s.requireSession(http.HandlerFunc(s.listRecordings)))
 	mux.Handle("GET /api/recordings/{id}/thumbnail", s.requireSession(http.HandlerFunc(s.serveThumbnail)))
 	mux.Handle("PUT /api/recordings/{id}/protection", s.requireSession(http.HandlerFunc(s.setRecordingProtection)))
@@ -373,6 +390,45 @@ func (s *Server) talk(writer http.ResponseWriter, request *http.Request) {
 	default:
 		log.Printf("talkback played (%d bytes, volume %d)", len(data), volume)
 		writeJSON(writer, http.StatusOK, map[string]bool{"played": true})
+	}
+}
+
+func (s *Server) listChecks(writer http.ResponseWriter, _ *http.Request) {
+	if s.diagnostics == nil {
+		writeJSON(writer, http.StatusOK, map[string]any{"available": false, "checks": []diag.Check{}})
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"available": true, "checks": s.diagnostics.Checks()})
+}
+
+// runCheck runs one check the debug page names by ID and returns its text.
+func (s *Server) runCheck(writer http.ResponseWriter, request *http.Request) {
+	_, session, _ := s.requestSession(request)
+	if !csrfMatches(request, session.CSRF) {
+		writeError(writer, http.StatusForbidden, "CSRF 검증에 실패했습니다.")
+		return
+	}
+	if s.diagnostics == nil {
+		writeError(writer, http.StatusServiceUnavailable, "이 게이트웨이에는 진단 기능이 없습니다.")
+		return
+	}
+	if !s.diagnosing.CompareAndSwap(false, true) {
+		writeError(writer, http.StatusConflict, "다른 진단이 실행 중입니다. 끝난 뒤 다시 누르세요.")
+		return
+	}
+	defer s.diagnosing.Store(false)
+	id := request.URL.Query().Get("id")
+	started := time.Now()
+	output, err := s.diagnostics.RunCheck(request.Context(), id)
+	switch {
+	case errors.Is(err, diag.ErrUnknownCheck):
+		writeError(writer, http.StatusNotFound, err.Error()+".")
+	case err != nil:
+		log.Printf("diagnostic %q failed: %v", id, err)
+		writeError(writer, http.StatusBadGateway, "실행하지 못했습니다: "+err.Error())
+	default:
+		writeJSON(writer, http.StatusOK, map[string]any{"id": id, "output": output,
+			"ranAt": started.Format(time.RFC3339), "seconds": time.Since(started).Seconds()})
 	}
 }
 

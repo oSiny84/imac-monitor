@@ -34,6 +34,11 @@
   const talkVolume = document.querySelector("#talk-volume");
   const talkVolumeValue = document.querySelector("#talk-volume-value");
   const talkState = document.querySelector("#talk-state");
+  const debugView = document.querySelector("#debug-view");
+  const debugChecks = document.querySelector("#debug-checks");
+  const debugState = document.querySelector("#debug-state");
+  const debugCommand = document.querySelector("#debug-command");
+  const debugOutput = document.querySelector("#debug-output");
   try { const saved = localStorage.getItem("macmonitor-live-quality"); if (["auto", "original", "balanced", "low"].includes(saved)) liveQuality.value = saved; } catch { /* Private browsing may disable storage. */ }
   document.querySelector("#recording-timezone").textContent = `날짜·시각 기준: 접속 기기 (${Intl.DateTimeFormat().resolvedOptions().timeZone}). 녹화 시작 시각으로 검색합니다.`;
 
@@ -109,6 +114,8 @@
     document.querySelectorAll(".tab").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
     document.querySelector("#live-view").hidden = view !== "live";
     document.querySelector("#recordings-view").hidden = view !== "recordings";
+    debugView.hidden = view !== "debug";
+    if (view === "debug") loadChecks();
     if (view === "recordings") {
       stopLive();
       stopWaking();
@@ -118,11 +125,12 @@
     }
   }
 
-  // Renews the lease that keeps the camera on. Only a visible live view asks for video, so
-  // the camera turns off soon after the viewer leaves, closes the tab or backgrounds it.
+  // Renews the lease that keeps the camera on. The owner asked (2026-11-27) that a minimized
+  // window or a background tab keep watching, so only the recordings tab, logout or closing
+  // the tab lets the camera turn off. The debug tab keeps the video too.
   async function sendLiveDemand() {
     const session = state.csrfToken;
-    if (!session || state.view !== "live" || document.hidden) return;
+    if (!session || state.view === "recordings") return;
     try {
       await request("/api/live/demand", { method: "POST" });
     } catch (error) {
@@ -623,11 +631,65 @@
     });
   }
 
-  function pollWhileVisible() {
-    if (state.csrfToken && !document.hidden) { sendLiveDemand(); refreshStatus(); }
+  // The debug page names a fixed check by ID; the gateway runs it and returns the text.
+  let checksLoaded = false;
+  let checkRunning = false;
+  async function loadChecks() {
+    if (checksLoaded || !state.csrfToken) return;
+    try {
+      const body = await request("/api/diag/checks");
+      if (!body.available) { debugState.textContent = "이 게이트웨이에는 진단 기능이 없습니다."; return; }
+      checksLoaded = true;
+      debugChecks.replaceChildren(...body.checks.map((check) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "secondary";
+        button.textContent = check.title;
+        button.addEventListener("click", () => runCheck(check));
+        return button;
+      }));
+    } catch (error) {
+      debugState.textContent = `진단 목록을 불러오지 못했습니다: ${error.message}`;
+    }
   }
-  setInterval(pollWhileVisible, 5000);
-  document.addEventListener("visibilitychange", pollWhileVisible);
+
+  async function runCheck(check) {
+    if (checkRunning) return;
+    checkRunning = true;
+    const buttons = [...debugChecks.querySelectorAll("button")];
+    for (const item of buttons) item.disabled = true;
+    debugState.textContent = `${check.title} 실행 중…`;
+    debugCommand.textContent = check.command;
+    debugCommand.hidden = false;
+    try {
+      const body = await request(`/api/diag/run?id=${encodeURIComponent(check.id)}`, { method: "POST" });
+      debugOutput.textContent = body.output;
+      debugOutput.hidden = false;
+      const at = new Date(body.ranAt);
+      const clock = Number.isNaN(at.getTime()) ? "" : `${at.toLocaleTimeString()} 실행 · `;
+      debugState.textContent = `${check.title} · ${clock}${Number(body.seconds || 0).toFixed(1)}초 걸림`;
+    } catch (error) {
+      debugOutput.hidden = true;
+      debugState.textContent = `${check.title}: ${error.message}`;
+    } finally {
+      checkRunning = false;
+      for (const item of buttons) item.disabled = false;
+    }
+  }
+
+  function poll() {
+    if (!state.csrfToken) return;
+    sendLiveDemand();
+    if (!document.hidden) refreshStatus();
+  }
+  // Chrome slows a page hidden for minutes to one timer a minute, past the 20-second lease, so
+  // the tick comes from a worker when the browser allows one.
+  try {
+    new Worker("/assets/ticker.js").onmessage = poll;
+  } catch {
+    setInterval(poll, 5000);
+  }
+  document.addEventListener("visibilitychange", poll);
 
   request("/api/session").then((session) => {
     if (session.authenticated) showAuthenticated(session); else showLogin();

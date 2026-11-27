@@ -67,6 +67,7 @@ func serve(arguments []string) {
 	// One player for the web page and the bot, so two sounds never play over each other.
 	player := speaker.New(recordings.LocateFFmpeg(), log.Printf)
 	server.SetTalker(player)
+	server.SetDiagnostics(diag.New(diag.DefaultDir()))
 
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddress,

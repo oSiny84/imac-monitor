@@ -237,15 +237,15 @@
     const mode = ["auto", "original", "balanced", "low"].includes(requested) ? requested : "auto";
     const player = new LivePlayer(video, document.querySelector("#player-status"), document.querySelector("#player-metrics"), mode,
       document.querySelector("#sound-toggle"));
-    let inPageCache = false;
     globalThis.addEventListener("pagehide", (event) => {
-      if (event.persisted) { inPageCache = true; player.suspend(); }
+      if (event.persisted) player.suspend();
       else player.close();
     });
     globalThis.addEventListener("pageshow", (event) => {
-      if (event.persisted) { inPageCache = false; if (!document.hidden) player.resume(); }
+      if (event.persisted) player.resume();
     });
-    document.addEventListener("visibilitychange", () => { if (document.hidden) player.suspend(); else if (!inPageCache) player.resume(); });
-    if (document.hidden) player.suspend(); else player.start();
+    // A hidden page keeps its connection: the owner watches with the window minimized or
+    // behind other tabs (asked 2026-11-27). Only leaving the page releases it.
+    player.start();
   }
 })();

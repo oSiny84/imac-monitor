@@ -69,6 +69,10 @@ form button { width: 100%; margin-top: 1rem; }
 .recording-filter button { width: auto; margin-top: 0; }
 .recording-filter > div { flex: 1 1 10rem; }
 .archive-hint { color: #91a096; font-size: .8rem; line-height: 1.5; }
+.debug-checks { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
+.debug-checks button { flex: 1 1 14rem; text-align: left; }
+.debug-command { margin: .75rem 0 .25rem; color: #89a898; font: .75rem/1.4 ui-monospace, monospace; overflow-wrap: anywhere; }
+.debug-output { max-height: 70vh; margin: 0; padding: .75rem; overflow: auto; border: 1px solid #2a3a31; border-radius: .5rem; background: #0b120e; color: #d7e4dc; font: .75rem/1.45 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 #recording-timezone { margin: .65rem 0 1rem; }
 .recording-preview { position: relative; flex: 0 0 10rem; aspect-ratio: 16 / 9; overflow: hidden; border-radius: .4rem; background: #080b09; }
 .recording-thumbnail { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
