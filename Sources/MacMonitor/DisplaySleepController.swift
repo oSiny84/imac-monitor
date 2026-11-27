@@ -31,7 +31,13 @@ final class DisplaySleepController {
 
     func turnOffOnce(respectExistingInput: Bool = false) {
         cancel()
-        guard !respectExistingInput || Self.secondsSinceInput >= 2 else { return }
+        if respectExistingInput {
+            let idle = Self.secondsSinceInput
+            guard idle >= 2 else {
+                NSLog("MacMonitor: display off skipped; input %.1f s ago at the request", idle)
+                return
+            }
+        }
         let token = generation
         let requestedAt = ProcessInfo.processInfo.systemUptime
         let work = DispatchWorkItem { [weak self] in
@@ -42,7 +48,12 @@ final class DisplaySleepController {
             // Main-queue work may run later than one second (for example, while
             // processing settings). Respect input anywhere in that whole wait.
             let elapsed = ProcessInfo.processInfo.systemUptime - requestedAt
-            guard Self.secondsSinceInput >= max(0, elapsed) else { return }
+            let idle = Self.secondsSinceInput
+            guard idle >= max(0, elapsed) else {
+                NSLog("MacMonitor: display off skipped; input %.1f s ago, %.1f s after the request", idle, elapsed)
+                return
+            }
+            NSLog("MacMonitor: turning the display off (input %.1f s ago)", idle)
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
             process.arguments = ["displaysleepnow"]

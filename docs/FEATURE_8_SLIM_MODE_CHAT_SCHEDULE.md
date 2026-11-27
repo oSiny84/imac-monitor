@@ -155,7 +155,9 @@ Mac에서 보아야 할 것(§7의 12~14번): 재운 뒤 다음 깨어남에 `�
 
 수정(사용자 결정, 2026-11-11): 깨어남을 알림 없이 시계 차이로만 알아챈 경우를 dark wake로 보고(`darkWakeSuspected`), 그 상태에서 캡처 요청이 오면 `IOPMAssertionDeclareUserActivity`로 완전한 깨어남을 한 번 요청한다(`FullWakeRequester`). 이때 화면이 켜지므로 1초 뒤 `pmset displaysleepnow`로 다시 끈다(깬 뒤 입력이 있으면 끄지 않음). 요구사항 7(원격 접속이 화면을 켜지 않음)은 이 경우에만 양보한다. 화면만 꺼지고 시스템이 깨어 있는 평소의 접속은 이 경로를 타지 않는다. 슬림 모드가 꺼져 있으면 깨우는 예약이 없어, 재운 Mac은 macOS가 스스로 깰 때까지 명령을 받지 못하는 점은 그대로다.
 
-Windows에서는 Swift를 컴파일하지 못해 이 수정은 Mac에서 처음 빌드되고 실행된다(§7의 17~19번).
+실험(2026-11-27, 사용자 요청): 화면을 켜지 않고 깨우는 방법을 시험한다. dark wake에서 캡처 요청이 오면 먼저 같은 함수의 "원격 사용자" 종류(`kIOPMUserActiveRemote`)로 요청하고, 10초 안에 카메라 프레임이 하나라도 오면 화면을 건드리지 않는다. 프레임이 없으면 이전처럼 화면이 켜지는 요청(`kIOPMUserActiveLocal`)을 보내고 화면을 다시 끈다. Apple 헤더는 이 종류를 "Remote User connected to the system"이라고만 설명해, 화면이 켜지는지와 카메라가 되는지는 Mac에서 확인해야 한다(§7의 20번). 실패하면 카메라가 지금보다 약 10초 늦게 켜진다. 화면 끄기를 건너뛴 이유(`display off skipped; input … s ago`)도 Console에 남겨, 켜진 화면이 10초 넘게 유지되는 원인을 가릴 수 있게 했다.
+
+Windows에서는 Swift를 컴파일하지 못해 이 수정은 Mac에서 처음 빌드되고 실행된다(§7의 17~20번).
 
 ## 4. 텔레그램 명령 채널
 
@@ -264,9 +266,10 @@ Windows에서는 Swift를 컴파일하지 못해 이 수정은 Mac에서 처음 
 16. (2026-11-09 추가) 텔레그램 `진단`이 Mac에서 답하는지, 칸마다 내용이 나오는지. 특히 `log show`가 40초 안에 끝나는지, `system_profiler`가 카메라를 보이는지, 게이트웨이가 `pmset -g log`를 읽을 수 있는지.
 17. (2026-11-09 추가) 슬림 모드에서 잠든 뒤 텔레그램 `카메라`로 깨웠을 때 영상이 나오는지. 프레임이 없으면 곧바로 `진단`을 보내 §3.6 표의 세 후보를 가립니다. 그 상태에서 Photo Booth도 검은지는 화면을 켜야 볼 수 있으므로, Mac 앞에 있을 때 한 번 확인합니다.
 
-17. (2026-11-11) 재운 Mac이 dark wake로 깨어 `카메라` 요청을 받았을 때 Console에 `capture requested in a dark wake; asking for a full wake`가 남고, `진단`의 `잠자기·깨어남`에 `DarkWake` 뒤 `Wake`(또는 `DarkWake to FullWake`) 줄이 생기는지. 웹에서 영상과 소리가 나오는지.
+17. (2026-11-11, 2026-11-27 문구 변경) 재운 Mac이 dark wake로 깨어 `카메라` 요청을 받았을 때 Console에 `capture requested in a dark wake; trying a quiet wake without the display`가 남고, `진단`의 `잠자기·깨어남`에 `DarkWake` 뒤 `Wake`(또는 `DarkWake to FullWake`) 줄이 생기는지. 웹에서 영상과 소리가 나오는지.
 18. (2026-11-11) 그때 화면이 켜졌다가 약 1초 뒤 다시 꺼지는지, 꺼진 뒤에도 카메라가 계속 나오고 Mac이 시청 중에 잠들지 않는지.
 19. (2026-11-11) 키보드로 직접 깨운 Mac과, 화면만 꺼진 채 깨어 있는 Mac에서는 접속해도 화면이 켜지거나 꺼지지 않는지.
+20. (2026-11-27) 재운 Mac에 `카메라`를 보낸 뒤 웹 `진단` 탭의 `앱 로그`에 `quiet wake worked; N frames … display left alone`이 남는지, 아니면 `asking for a full wake with the display (no camera frame 10 s after the quiet wake)`가 남는지. 앞의 경우 화면이 실제로 켜지지 않았는지(`잠자기·깨어남·화면 켜짐/꺼짐`에 `Display is turned on`이 없는지)와 Mac이 곧 다시 잠들지 않는지. 뒤의 경우 `turning the display off` 또는 `display off skipped` 줄과 화면이 켜져 있던 시간.
 
 ## 8. 다음 단계
 
