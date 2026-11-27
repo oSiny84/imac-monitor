@@ -143,12 +143,6 @@ public final class MonitoringHealthReporter {
         activity.recordFrame(at: uptime)
     }
 
-    /// Frames received since the running capture started; zero while no capture is running.
-    public var framesSinceCaptureStart: UInt64 {
-        lock.lock(); defer { lock.unlock() }
-        return activity.isActive ? activity.frames : 0
-    }
-
     public func recordRetentionWarning(_ warning: String?) {
         lock.lock(); defer { lock.unlock() }
         retentionWarning = warning

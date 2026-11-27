@@ -50,11 +50,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // dark wake looks from here. A capture request in that state asks for a full wake.
     private var darkWakeSuspected = false
     private let fullWake = FullWakeRequester()
-    // Changes whenever a pending quiet-wake check must no longer act (sleep, a newer attempt).
-    private var quietWakeToken = UUID()
-    /// How long a quiet wake gets to deliver a camera frame before the display is lit. Shorter
-    /// than the 15 s first-frame watchdog, so the fallback comes before a capture restart.
-    private static let quietWakeWait: TimeInterval = 10
     private var remoteActivity: NSObjectProtocol?
     private var reportedStandbyPowerError = false
     // Slim mode: the Mac may sleep between requests and wakes itself on a schedule.
@@ -279,7 +274,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sleepStartedAt = Date()
         systemSleeping = true
         darkWakeSuspected = false
-        quietWakeToken = UUID()
         archiveAccess.stop()
         // Uptime stops during sleep, so a lease must not look fresh again after waking.
         liveDemand.stop()
@@ -362,22 +356,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if lastDesired != .off, desired == .off { captureEndedUptime = ProcessInfo.processInfo.systemUptime }
         lastDesired = desired
         if desired != .off, darkWakeSuspected {
-            // One attempt per wake. The camera does not run in a dark wake. First try the
-            // remote-user declaration, which may wake the Mac without lighting the display
-            // (experiment, 2026-11-27); if no frame arrives in time, light the display as
-            // before (the owner's decision of 2026-11-11). A display that sleeps while the
-            // Mac stays fully awake never takes this path.
+            // One request per wake. The camera does not run in a dark wake, and the full wake
+            // lights the display (requirement 7 gives way here by the owner's decision,
+            // 2026-11-11). The wake request itself counts as fresh input, so the display is
+            // turned off without the usual input check: being in a dark wake already shows
+            // nobody is at the Mac, since a person's input makes a full wake. Before
+            // 2026-11-27 the input check skipped the turn-off and the display stayed on for
+            // macOS's own 30 s. A display that sleeps while the Mac stays fully awake never
+            // takes this path.
             darkWakeSuspected = false
-            if fullWake.request(.remote) {
-                NSLog("MacMonitor: capture requested in a dark wake; trying a quiet wake without the display")
-                let token = UUID()
-                quietWakeToken = token
-                DispatchQueue.main.asyncAfter(deadline: .now() + Self.quietWakeWait) { [weak self] in
-                    self?.checkQuietWake(token)
-                }
-            } else {
-                requestFullWakeWithDisplay(reason: "the quiet wake request failed")
-            }
+            let idle = DisplaySleepController.secondsSinceInput
+            NSLog("MacMonitor: capture requested in a dark wake; asking for a full wake (input %.1f s ago)", idle)
+            if fullWake.request() { displaySleep.turnOffAfterOwnWake() }
         }
         if systemSleeping {
             healthReporter.setPauseReason(.systemSleep)
@@ -406,26 +396,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         healthReporter.setRemoteState(captureMode: activeMode, liveStandby: liveStandby, slimMode: slimMode.enabled)
         updateRemotePower(resting: resting, captureWanted: desired != .off)
         updateStatusPresentation()
-    }
-
-    private func requestFullWakeWithDisplay(reason: String) {
-        NSLog("MacMonitor: asking for a full wake with the display (%@)", reason)
-        if fullWake.request(.local) { displaySleep.turnOffOnce(respectExistingInput: true) }
-    }
-
-    /// Runs once, quietWakeWait after a quiet wake was requested.
-    private func checkQuietWake(_ token: UUID) {
-        guard token == quietWakeToken, authenticated, !terminating, !systemSleeping else { return }
-        guard lastDesired != .off else {
-            NSLog("MacMonitor: quiet wake check skipped; the camera is no longer wanted")
-            return
-        }
-        let frames = healthReporter.framesSinceCaptureStart
-        if frames > 0 {
-            NSLog("MacMonitor: quiet wake worked; %llu frames in %.0f s, display left alone", frames, Self.quietWakeWait)
-        } else {
-            requestFullWakeWithDisplay(reason: String(format: "no camera frame %.0f s after the quiet wake", Self.quietWakeWait))
-        }
     }
 
     private func stopCapture() {
